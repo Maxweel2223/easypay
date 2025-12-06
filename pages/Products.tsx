@@ -62,9 +62,12 @@ const Products: React.FC = () => {
       console.error('Error fetching products:', err);
       let errorMessage = typeof err === 'string' ? err : err?.message || JSON.stringify(err);
       
+      // Detecção expandida de erros de esquema (tabela faltando ou colunas faltando)
       if (err?.code === '42P01' || err?.code === 'PGRST205' || err?.code === 'PGRST204') { 
           const sqlScript = `
--- Execute no Supabase SQL Editor
+-- COPY AND RUN THIS IN SUPABASE SQL EDITOR --
+
+-- 1. Create tables if they don't exist
 create table if not exists public.products (
   id uuid default gen_random_uuid() primary key,
   created_at timestamp with time zone default timezone('utc'::text, now()) not null,
@@ -83,6 +86,7 @@ create table if not exists public.products (
   "analyticsId" text,
   "redirectUrl" text
 );
+
 create table if not exists public.sales (
   id uuid default gen_random_uuid() primary key,
   "productId" uuid,
@@ -95,18 +99,38 @@ create table if not exists public.sales (
   user_id uuid,
   created_at timestamp default now()
 );
+
+-- 2. Add missing columns (if table already exists from previous version)
+alter table public.products add column if not exists whatsapp text;
+alter table public.products add column if not exists "pixelId" text;
+alter table public.products add column if not exists "analyticsId" text;
+alter table public.products add column if not exists "redirectUrl" text;
+
+-- 3. Enable RLS
 alter table public.products enable row level security;
 alter table public.sales enable row level security;
+
+-- 4. Policies (Drop old to avoid conflicts, then recreate)
+drop policy if exists "Users can view their own products" on public.products;
+drop policy if exists "Users can insert their own products" on public.products;
+drop policy if exists "Users can update their own products" on public.products;
+drop policy if exists "Users can delete their own products" on public.products;
+drop policy if exists "Public can view approved products" on public.products;
+drop policy if exists "Public insert sales" on public.sales;
+drop policy if exists "Users can view their sales" on public.sales;
+
 create policy "Users can view their own products" on public.products for select using (auth.uid() = user_id);
 create policy "Users can insert their own products" on public.products for insert with check (auth.uid() = user_id);
 create policy "Users can update their own products" on public.products for update using (auth.uid() = user_id);
 create policy "Users can delete their own products" on public.products for delete using (auth.uid() = user_id);
 create policy "Public can view approved products" on public.products for select using (true);
+
 create policy "Public insert sales" on public.sales for insert with check (true);
 create policy "Users can view their sales" on public.sales for select using (auth.uid() = user_id);
           `;
+          console.warn(">>> SCRIPT SQL PARA CORREÇÃO DO BANCO DE DADOS <<<");
           console.log(sqlScript);
-          setError("Tabelas não encontradas. Verifique o console para o script SQL de criação.");
+          setError("Estrutura do banco de dados desatualizada. Verifique o console (F12) para o script SQL de correção.");
       } else {
           setError(`Erro ao carregar produtos: ${errorMessage}`);
       }
@@ -242,9 +266,6 @@ create policy "Users can view their sales" on public.sales for select using (aut
             analyticsId: newProduct.analyticsId,
             redirectUrl: newProduct.redirectUrl,
             user_id: user.id,
-            // If editing, keep existing status unless name/image changes substantially, but for simplicity reset to pending if major changes? 
-            // For now, let's keep status as is for edits or reset to pending if you want re-verification.
-            // Let's reset to pending to be safe on edits.
             status: 'pending', 
             rejectionReason: null
         };
@@ -285,7 +306,15 @@ create policy "Users can view their sales" on public.sales for select using (aut
 
     } catch (err: any) {
         console.error("Error saving product:", err);
-        setError(`Erro ao salvar: ${err.message || 'Falha desconhecida'}`);
+        
+        // Tratamento específico para o erro de coluna faltando (PGRST204)
+        if (err?.code === 'PGRST204' && err?.message?.includes('redirectUrl')) {
+             const fixSql = 'ALTER TABLE public.products ADD COLUMN IF NOT EXISTS "redirectUrl" text;';
+             console.warn(">>> EXECUTE ISSO NO SUPABASE SQL EDITOR:", fixSql);
+             setError(`Erro: Seu banco de dados está desatualizado. Falta a coluna 'redirectUrl'. Execute no Supabase: ${fixSql}`);
+        } else {
+             setError(`Erro ao salvar: ${err.message || 'Falha desconhecida'}`);
+        }
     } finally {
         setIsGenerating(false);
     }
@@ -350,7 +379,10 @@ create policy "Users can view their sales" on public.sales for select using (aut
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm break-words">
-            {error}
+            <div className="flex items-start gap-2">
+                 <AlertTriangle size={18} className="mt-0.5 shrink-0" />
+                 <div>{error}</div>
+            </div>
         </div>
       )}
 

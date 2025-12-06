@@ -71,12 +71,13 @@ export const initiateMpesaPayment = async (
         cleanPhone = cleanPhone.substring(3);
     }
 
-    // Sanitiza a referência (apenas alfanuméricos) para evitar rejeição da API
-    const cleanRef = reference.replace(/[^a-zA-Z0-9]/g, '');
+    // Sanitiza a referência (apenas alfanuméricos) e limita tamanho para evitar rejeição
+    // Algumas APIs limitam a referência a caracteres simples e curtos.
+    const cleanRef = reference.replace(/[^a-zA-Z0-9]/g, '').substring(0, 15);
 
     const payload = {
       client_id: CLIENT_ID,
-      amount: amount.toString(), // API espera string
+      amount: amount.toFixed(2), // Garante formato "100.00"
       phone: cleanPhone,
       reference: cleanRef,
     };
@@ -107,15 +108,23 @@ export const initiateMpesaPayment = async (
 
     if (!response.ok) {
       console.error("Erro detalhado da API:", result);
-      // Tenta extrair a mensagem de erro de vários formatos possíveis
-      const errorMsg = result.message || result.error || result.description || JSON.stringify(result);
+      
+      let errorMsg = result.message || result.error || "Erro desconhecido";
+
+      // Tenta extrair erro específico do M-Pesa (ex: Bad API Key, Saldo insuficiente)
+      if (result.mpesa_server_response && result.mpesa_server_response.output_error) {
+          errorMsg = `M-Pesa: ${result.mpesa_server_response.output_error}`;
+      } else if (result.mpesa_server_response && result.mpesa_server_response.output_ResponseDesc) {
+          errorMsg = `M-Pesa: ${result.mpesa_server_response.output_ResponseDesc}`;
+      }
+
       throw new Error(errorMsg);
     }
 
     return result;
   } catch (error: any) {
     console.error("Erro no pagamento M-Pesa:", error);
-    // Repassa o erro original para o frontend mostrar no alert
+    // Repassa o erro original para o frontend
     throw new Error(error.message || "Falha na comunicação com o gateway de pagamento.");
   }
 };

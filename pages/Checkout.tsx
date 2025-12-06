@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { Product } from '../types';
 import { initiateMpesaPayment } from '../services/e2PaymentsService';
-import { Loader2, Lock, ShieldCheck, CheckCircle, Smartphone, AlertCircle, ArrowRight, Download, Clock, CreditCard } from 'lucide-react';
+import { Loader2, Lock, ShieldCheck, CheckCircle, Smartphone, AlertCircle, ArrowRight, Download, Clock, CreditCard, AlertTriangle } from 'lucide-react';
 
 const MPESA_LOGO = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRQ0sHbwOcJqdlSc--oFUZ5ezQ0BihmuTjy7Q&s";
 
@@ -11,7 +11,8 @@ const Checkout: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [product, setProduct] = useState<Product | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null); // Product fetching error
+  const [paymentError, setPaymentError] = useState<string | null>(null); // Payment process error
   const [timeLeft, setTimeLeft] = useState(360); // 6 minutes in seconds
   
   // Checkout State
@@ -56,6 +57,8 @@ const Checkout: React.FC = () => {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
       setFormData({ ...formData, [e.target.name]: e.target.value });
+      // Limpa erro de pagamento se o usuário começar a corrigir dados
+      if (paymentError) setPaymentError(null);
   };
 
   const validatePaymentPrefix = (phone: string) => {
@@ -75,9 +78,10 @@ const Checkout: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
+      setPaymentError(null);
       
       if (!formData.name || !formData.whatsapp || !formData.paymentPhone) {
-          alert("Por favor preencha todos os campos obrigatórios.");
+          setPaymentError("Por favor preencha todos os campos obrigatórios.");
           return;
       }
 
@@ -86,17 +90,17 @@ const Checkout: React.FC = () => {
       
       // Validação de Prefixo Estrita para PAGAMENTO (M-Pesa Only)
       if (!['84', '85'].includes(cleanPaymentPhone.substring(0, 2))) {
-          alert("Para M-Pesa, o número de PAGAMENTO deve começar com 84 ou 85.");
+          setPaymentError("Para M-Pesa, o número de PAGAMENTO deve começar com 84 ou 85.");
           return;
       }
 
       if (cleanPaymentPhone.length !== 9) {
-          alert("O número de pagamento deve ter 9 dígitos.");
+          setPaymentError("O número de pagamento deve ter 9 dígitos.");
           return;
       }
       
       if (cleanWhatsApp.length < 9) {
-           alert("Número de WhatsApp de contato inválido.");
+           setPaymentError("Número de WhatsApp de contato inválido.");
            return;
       }
 
@@ -109,8 +113,8 @@ const Checkout: React.FC = () => {
         // 1. Chamar API Real da e2Payments
         setStatusMessage('Aguarde o pop-up no seu celular...');
         
-        // Gera uma referência única: PE + ID curto do produto + timestamp curto
-        const reference = `PE-${product.id.substring(0,4)}-${Date.now().toString().substring(8)}`;
+        // Gera uma referência única curta
+        const reference = `PE${product.id.substring(0,3)}${Date.now().toString().slice(-4)}`;
         
         await initiateMpesaPayment(
             cleanPaymentPhone,
@@ -122,10 +126,7 @@ const Checkout: React.FC = () => {
         // O cliente deve ter recebido o push no celular.
         setStatusMessage('Por favor, confirme o PIN no seu celular.');
 
-        // Aqui, em um sistema real, faríamos "polling" no status da transação.
-        // Como a API e2Payments C2B é síncrona no trigger, mas assíncrona na confirmação,
-        // vamos simular um pequeno delay para UX e registrar a venda como "Pendente/Completed".
-        
+        // Simula espera da confirmação (Polling seria o ideal)
         await new Promise(resolve => setTimeout(resolve, 5000));
 
         // 2. Registrar venda no Supabase
@@ -149,7 +150,7 @@ const Checkout: React.FC = () => {
 
       } catch (err: any) {
           console.error("Erro no pagamento:", err);
-          alert(`Erro no pagamento: ${err.message}`);
+          setPaymentError(err.message || "Falha desconhecida no pagamento");
           setStep('form');
           setStatusMessage('');
       }
@@ -296,6 +297,21 @@ const Checkout: React.FC = () => {
                    <h2 className="text-xl font-bold text-gray-900">Finalizar Compra</h2>
                    <p className="text-sm text-gray-500">Preencha seus dados para receber o produto.</p>
                </div>
+
+               {paymentError && (
+                   <div className="mb-6 bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3 animate-fade-in">
+                       <AlertTriangle className="text-red-500 shrink-0 mt-0.5" size={20} />
+                       <div>
+                           <h3 className="text-sm font-bold text-red-700">Falha no Pagamento</h3>
+                           <p className="text-sm text-red-600 mt-1">{paymentError}</p>
+                           {paymentError.includes("Bad API Key") && (
+                               <p className="text-xs text-red-500 mt-2">
+                                   Dica técnica: A carteira configurada no sistema (e2Payments) parece ter credenciais inválidas para o M-Pesa. Contate o administrador.
+                               </p>
+                           )}
+                       </div>
+                   </div>
+               )}
                
                <form onSubmit={handleSubmit} className="space-y-5">
                    {/* 1. Método (Apenas M-Pesa visível/ativo) */}
