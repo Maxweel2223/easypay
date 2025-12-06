@@ -1,10 +1,20 @@
 import React, { useState, useEffect } from 'react';
-import { Copy, Share2, QrCode, ExternalLink, Check, Loader2, AlertCircle, ShoppingBag } from 'lucide-react';
+import { Copy, Share2, QrCode, ExternalLink, Check, Loader2, AlertCircle, ShoppingBag, History } from 'lucide-react';
 import { Product } from '../types';
 import { supabase } from '../services/supabaseClient';
 
+interface GeneratedLink {
+    id: string;
+    product_id: string;
+    product_name: string;
+    product_image: string;
+    price: number;
+    created_at: string;
+}
+
 const Links: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
+  const [generatedLinksHistory, setGeneratedLinksHistory] = useState<GeneratedLink[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<string>('');
   const [generatedLink, setGeneratedLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -12,43 +22,114 @@ const Links: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchProducts();
+    fetchData();
   }, []);
 
-  const fetchProducts = async () => {
+  const fetchData = async () => {
     try {
         setLoading(true);
         setError(null);
         const { data: { user } } = await supabase.auth.getUser();
         if(!user) return;
 
-        const { data, error } = await supabase
+        // Fetch Products
+        const { data: prodData, error: prodError } = await supabase
             .from('products')
             .select('*')
             .eq('user_id', user.id)
             .eq('status', 'approved'); 
 
-        if (error) throw error;
-        if (data) setProducts(data);
+        if (prodError) throw prodError;
+        if (prodData) setProducts(prodData);
+
+        // Fetch Generated Links History
+        const { data: linkData, error: linkError } = await supabase
+            .from('payment_links')
+            .select(`
+                id,
+                created_at,
+                product_id,
+                products (name, imageUrl, price)
+            `)
+            .eq('user_id', user.id)
+            .order('created_at', { ascending: false });
+
+        if (linkError) throw linkError;
+
+        if (linkData) {
+            const mappedLinks: GeneratedLink[] = linkData.map((item: any) => ({
+                id: item.id,
+                product_id: item.product_id,
+                product_name: item.products?.name || 'Produto Removido',
+                product_image: item.products?.imageUrl || '',
+                price: item.products?.price || 0,
+                created_at: new Date(item.created_at).toLocaleDateString()
+            }));
+            setGeneratedLinksHistory(mappedLinks);
+        }
+
     } catch (err: any) {
-        console.error("Error loading products for links:", err);
+        console.error("Error loading data:", err);
         if (err?.code === '42P01' || err?.code === 'PGRST205') {
-             setError("Tabela 'products' não encontrada. Verifique a aba 'Produtos' para instruções.");
+             // SQL Script para criar a tabela payment_links
+             const sqlFix = `
+-- COPY AND RUN THIS IN SUPABASE SQL EDITOR --
+create table if not exists public.payment_links (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references auth.users not null,
+  product_id uuid references public.products not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+alter table public.payment_links enable row level security;
+create policy "Users can view their own links" on public.payment_links for select using (auth.uid() = user_id);
+create policy "Users can insert their own links" on public.payment_links for insert with check (auth.uid() = user_id);
+             `;
+             console.warn("SQL FIX FOR LINKS:", sqlFix);
+             setError("Tabela 'payment_links' não encontrada. Verifique o console para o script de correção.");
         } else {
-             setError("Não foi possível carregar seus produtos.");
+             setError("Não foi possível carregar seus dados.");
         }
     } finally {
         setLoading(false);
     }
   };
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if(!selectedProduct) return;
     const product = products.find(p => p.id === selectedProduct);
     if (!product) return;
 
-    // Use Hash router format (/#/checkout/...)
-    setGeneratedLink(`https://fastpayzinmoz.vercel.app/#/checkout/${product.id}`);
+    try {
+        setLoading(true);
+        const { data: { user } } = await supabase.auth.getUser();
+        if(!user) throw new Error("User not found");
+
+        // Save to DB History
+        const { error } = await supabase.from('payment_links').insert([{
+            user_id: user.id,
+            product_id: product.id
+        }]);
+
+        if (error) throw error;
+
+        // Update local list
+        setGeneratedLinksHistory(prev => [{
+            id: Date.now().toString(), // temp id
+            product_id: product.id,
+            product_name: product.name,
+            product_image: product.imageUrl || '',
+            price: product.price,
+            created_at: new Date().toLocaleDateString()
+        }, ...prev]);
+
+        // Show link
+        setGeneratedLink(`https://fastpayzinmoz.vercel.app/#/checkout/${product.id}`);
+    } catch (err) {
+        console.error("Error generating link", err);
+        alert("Erro ao salvar histórico do link.");
+    } finally {
+        setLoading(false);
+    }
   };
 
   const copyToClipboard = (text: string) => {
@@ -99,8 +180,8 @@ const Links: React.FC = () => {
                              <AlertCircle size={16} className="mr-2" />
                              {error}
                          </div>
-                    ) : loading ? (
-                        <div className="flex items-center text-sm text-gray-500"><Loader2 className="animate-spin mr-2" size={16}/> Carregando produtos...</div>
+                    ) : products.length === 0 && !loading ? (
+                         <p className="text-sm text-amber-600 bg-amber-50 p-3 rounded-lg">Você não possui produtos aprovados para gerar links.</p>
                     ) : (
                         <select 
                             className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
@@ -109,6 +190,7 @@ const Links: React.FC = () => {
                                 setSelectedProduct(e.target.value);
                                 setGeneratedLink(null);
                             }}
+                            disabled={loading}
                         >
                             <option value="">Selecione...</option>
                             {products.map(p => (
@@ -116,22 +198,20 @@ const Links: React.FC = () => {
                             ))}
                         </select>
                     )}
-                    {products.length === 0 && !loading && !error && (
-                        <p className="text-xs text-amber-600 mt-2">Você não possui produtos aprovados. Vá em "Produtos" e cadastre um novo item.</p>
-                    )}
                 </div>
 
                 <button 
                     onClick={handleGenerate}
-                    disabled={!selectedProduct}
-                    className="w-full py-3 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                    disabled={!selectedProduct || loading}
+                    className="w-full py-3 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center"
                 >
+                    {loading ? <Loader2 className="animate-spin mr-2" /> : null}
                     Gerar Link de Pagamento
                 </button>
 
                 {generatedLink && (
                     <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800 rounded-lg p-4 animate-fade-in">
-                        <p className="text-sm font-medium text-indigo-900 dark:text-indigo-300 mb-2">Link gerado com sucesso!</p>
+                        <p className="text-sm font-medium text-indigo-900 dark:text-indigo-300 mb-2">Link gerado e salvo no histórico!</p>
                         <div className="flex items-center gap-2">
                             <input 
                                 type="text" 
@@ -192,39 +272,42 @@ const Links: React.FC = () => {
 
       {/* Link History Table */}
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6 overflow-hidden">
-          <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-6">Seus Links Ativos</h2>
+          <div className="flex items-center gap-2 mb-6">
+              <History className="text-indigo-600 dark:text-indigo-400" size={24} />
+              <h2 className="text-lg font-bold text-gray-900 dark:text-white">Histórico de Links Gerados</h2>
+          </div>
           
           <div className="overflow-x-auto">
               <table className="w-full text-left">
                   <thead>
                       <tr className="border-b border-gray-100 dark:border-gray-700 text-sm text-gray-500 dark:text-gray-400">
                           <th className="pb-3 pl-2 min-w-[200px]">Produto</th>
-                          <th className="pb-3 min-w-[100px]">Preço</th>
-                          <th className="pb-3 min-w-[200px]">Link Direto</th>
+                          <th className="pb-3 min-w-[100px]">Data</th>
+                          <th className="pb-3 min-w-[200px]">Link Ativo</th>
                           <th className="pb-3 text-right pr-2 min-w-[100px]">Ação</th>
                       </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                      {products.map(product => {
-                          const link = getLinkForProduct(product.id);
+                      {generatedLinksHistory.map(item => {
+                          const link = getLinkForProduct(item.product_id);
                           return (
-                            <tr key={product.id} className="group hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                            <tr key={item.id} className="group hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
                                 <td className="py-4 pl-2">
                                     <div className="flex items-center gap-3">
                                         <div className="w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-700 overflow-hidden flex-shrink-0">
-                                            {product.imageUrl ? (
-                                                <img src={product.imageUrl} alt="" className="w-full h-full object-cover"/>
+                                            {item.product_image ? (
+                                                <img src={item.product_image} alt="" className="w-full h-full object-cover"/>
                                             ) : (
                                                 <div className="w-full h-full flex items-center justify-center text-gray-400"><ShoppingBag size={16}/></div>
                                             )}
                                         </div>
                                         <div>
-                                            <p className="font-medium text-gray-900 dark:text-white text-sm">{product.name}</p>
-                                            <p className="text-xs text-gray-500 dark:text-gray-400">ID: {product.id.slice(0,8)}...</p>
+                                            <p className="font-medium text-gray-900 dark:text-white text-sm">{item.product_name}</p>
+                                            <p className="text-xs text-gray-500 dark:text-gray-400">{item.price.toFixed(2)} MZN</p>
                                         </div>
                                     </div>
                                 </td>
-                                <td className="py-4 text-sm text-gray-600 dark:text-gray-300">{product.price.toFixed(2)} MZN</td>
+                                <td className="py-4 text-sm text-gray-600 dark:text-gray-300">{item.created_at}</td>
                                 <td className="py-4">
                                     <div className="flex items-center gap-2 max-w-[200px]">
                                         <p className="text-xs text-gray-500 truncate bg-gray-50 dark:bg-gray-900 p-1.5 rounded border border-gray-100 dark:border-gray-700 select-all">
@@ -257,8 +340,10 @@ const Links: React.FC = () => {
                       })}
                   </tbody>
               </table>
-              {products.length === 0 && !loading && (
-                  <p className="text-center text-gray-500 py-8 text-sm">Nenhum produto ativo encontrado.</p>
+              {generatedLinksHistory.length === 0 && !loading && (
+                  <p className="text-center text-gray-500 py-8 text-sm bg-gray-50 dark:bg-gray-900/50 rounded-lg mt-4">
+                      Nenhum link gerado ainda. Gere um link acima para vê-lo aqui.
+                  </p>
               )}
           </div>
       </div>

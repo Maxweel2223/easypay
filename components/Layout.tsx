@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   LayoutDashboard, 
   Package, 
@@ -29,6 +29,7 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout }) => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const notifRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -44,7 +45,20 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout }) => {
     };
 
     window.addEventListener('payeasy-notification', handleNewNotification);
-    return () => window.removeEventListener('payeasy-notification', handleNewNotification);
+    
+    // Click outside to close notifications
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
+        setShowNotifications(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+
+    return () => {
+      window.removeEventListener('payeasy-notification', handleNewNotification);
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
   }, []);
 
   const navItems = [
@@ -143,45 +157,46 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout }) => {
 
           <div className="flex items-center gap-4 ml-auto">
             {/* Notifications */}
-            <div className="relative">
+            <div className="relative" ref={notifRef}>
                 <button 
                     onClick={() => setShowNotifications(!showNotifications)}
                     className="relative p-2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
                 >
                 <Bell size={20} />
                 {unreadCount > 0 && (
-                    <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white dark:border-gray-800"></span>
+                    <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white dark:border-gray-800 animate-pulse"></span>
                 )}
                 </button>
                 
-                {/* Notifications Dropdown */}
+                {/* Notifications Dropdown - Fixed for Mobile */}
                 {showNotifications && (
-                    <div className="absolute right-0 mt-2 w-80 bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-100 dark:border-gray-700 overflow-hidden">
-                        <div className="p-3 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
-                            <h3 className="font-semibold text-sm">Notificações</h3>
+                    <div className="absolute right-0 lg:right-0 -mr-16 lg:mr-0 mt-2 w-[calc(100vw-2rem)] sm:w-80 max-w-sm bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-100 dark:border-gray-700 overflow-hidden z-50">
+                        <div className="p-3 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center bg-gray-50/50 dark:bg-gray-900/50">
+                            <h3 className="font-semibold text-sm text-gray-900 dark:text-white">Notificações</h3>
                             {unreadCount > 0 && (
                                 <button onClick={markAllAsRead} className="text-xs text-indigo-600 hover:text-indigo-800 dark:text-indigo-400">
                                     Marcar lidas
                                 </button>
                             )}
                         </div>
-                        <div className="max-h-64 overflow-y-auto">
+                        <div className="max-h-[60vh] overflow-y-auto">
                             {notifications.length === 0 ? (
-                                <div className="p-4 text-center text-sm text-gray-500">
+                                <div className="p-8 text-center text-sm text-gray-500 dark:text-gray-400 flex flex-col items-center">
+                                    <Bell size={32} className="mb-2 opacity-20" />
                                     Nenhuma notificação nova.
                                 </div>
                             ) : (
                                 notifications.map(notif => (
-                                    <div key={notif.id} className={`p-3 border-b border-gray-50 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 ${!notif.read ? 'bg-indigo-50/50 dark:bg-indigo-900/10' : ''}`}>
+                                    <div key={notif.id} className={`p-4 border-b border-gray-50 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors ${!notif.read ? 'bg-indigo-50/50 dark:bg-indigo-900/10' : ''}`}>
                                         <div className="flex gap-3">
-                                            <div className={`mt-1 w-2 h-2 rounded-full shrink-0 ${
-                                                notif.type === 'success' ? 'bg-green-500' : 
+                                            <div className={`mt-1.5 w-2.5 h-2.5 rounded-full shrink-0 ${
+                                                notif.type === 'success' ? 'bg-emerald-500' : 
                                                 notif.type === 'error' ? 'bg-red-500' : 'bg-blue-500'
                                             }`} />
                                             <div>
-                                                <p className="text-sm font-medium text-gray-900 dark:text-white">{notif.title}</p>
+                                                <p className="text-sm font-medium text-gray-900 dark:text-white leading-snug">{notif.title}</p>
                                                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">{notif.message}</p>
-                                                <p className="text-[10px] text-gray-400 mt-2">{notif.created_at}</p>
+                                                <p className="text-[10px] text-gray-400 mt-2 font-medium">{notif.created_at}</p>
                                             </div>
                                         </div>
                                     </div>
