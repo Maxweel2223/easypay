@@ -83,16 +83,36 @@ create table if not exists public.products (
   "analyticsId" text,
   "redirectUrl" text
 );
+-- VENDAS TABLE (Para funcionar o checkout)
+create table if not exists public.sales (
+  id uuid default gen_random_uuid() primary key,
+  "productId" uuid,
+  "productName" text,
+  amount numeric,
+  method text,
+  status text,
+  "customerName" text,
+  customer_whatsapp text,
+  user_id uuid, -- vendedor
+  created_at timestamp default now()
+);
+
 alter table public.products enable row level security;
+alter table public.sales enable row level security;
+
+-- Policies Products
 create policy "Users can view their own products" on public.products for select using (auth.uid() = user_id);
 create policy "Users can insert their own products" on public.products for insert with check (auth.uid() = user_id);
 create policy "Users can update their own products" on public.products for update using (auth.uid() = user_id);
 create policy "Users can delete their own products" on public.products for delete using (auth.uid() = user_id);
--- Permitir leitura pública para o Checkout (IMPORTANTE)
 create policy "Public can view approved products" on public.products for select using (true);
+
+-- Policies Sales (Permitir insert público para o checkout)
+create policy "Public insert sales" on public.sales for insert with check (true);
+create policy "Users can view their sales" on public.sales for select using (auth.uid() = user_id);
           `;
           console.log(sqlScript);
-          setError("Tabela 'products' não encontrada ou desatualizada. Verifique o console para o script SQL.");
+          setError("Tabelas não encontradas. Verifique o console para o script SQL de criação.");
       } else {
           setError(`Erro ao carregar produtos: ${errorMessage}`);
       }
@@ -231,21 +251,7 @@ create policy "Public can view approved products" on public.products for select 
 
     } catch (err: any) {
         console.error("Error saving product:", err);
-
-        if (err?.code === 'PGRST204' || (err?.message && err.message.includes('Could not find the'))) {
-             const updateSql = `
--- Execute no Supabase SQL Editor:
-alter table public.products add column if not exists whatsapp text;
-alter table public.products add column if not exists "pixelId" text;
-alter table public.products add column if not exists "analyticsId" text;
-alter table public.products add column if not exists "redirectUrl" text;
-             `;
-             console.info('%c Colunas faltando! Execute este SQL:', 'color: #ef4444; font-weight: bold;');
-             console.log(updateSql);
-             setError("Erro de banco de dados: Colunas novas ausentes. Verifique o console para o comando SQL de atualização.");
-        } else {
-             setError(`Erro ao salvar: ${err.message || 'Falha desconhecida'}`);
-        }
+        setError(`Erro ao salvar: ${err.message || 'Falha desconhecida'}`);
     } finally {
         setIsGenerating(false);
     }
@@ -279,7 +285,7 @@ alter table public.products add column if not exists "redirectUrl" text;
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-20">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Meus Produtos</h1>
@@ -411,7 +417,7 @@ alter table public.products add column if not exists "redirectUrl" text;
             <form onSubmit={handleSaveProduct} className="p-6 space-y-6">
               
               <div className="flex flex-col md:flex-row gap-6">
-                  {/* Image Upload */}
+                  {/* Image Upload Mobile Fix: Overlay Input */}
                   <div className="w-full md:w-1/3">
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Imagem do Produto</label>
                       <div className="relative aspect-square bg-gray-100 dark:bg-gray-700 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 flex flex-col items-center justify-center overflow-hidden group hover:border-indigo-500 transition-colors">
@@ -423,12 +429,19 @@ alter table public.products add column if not exists "redirectUrl" text;
                           ) : newProduct.imageUrl ? (
                               <img src={newProduct.imageUrl} alt="Preview" className="w-full h-full object-cover" />
                           ) : (
-                              <div className="text-center p-4">
+                              <div className="text-center p-4 pointer-events-none">
                                   <Upload className="mx-auto text-gray-400 mb-2" />
                                   <p className="text-xs text-gray-500">Toque para upload</p>
                               </div>
                           )}
-                          <input type="file" required accept="image/*" onChange={handleImageUpload} className="absolute inset-0 opacity-0 cursor-pointer" />
+                          {/* Important: Absolute full-size input with opacity 0 handles clicks perfectly on mobile */}
+                          <input 
+                            type="file" 
+                            required 
+                            accept="image/*" 
+                            onChange={handleImageUpload} 
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" 
+                          />
                       </div>
                   </div>
 

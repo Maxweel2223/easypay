@@ -54,7 +54,7 @@ const Settings: React.FC<SettingsProps> = ({ user, theme, toggleTheme, onUpdateU
   };
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
+    <div className="max-w-4xl mx-auto space-y-8 pb-20">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Configurações</h1>
         <p className="text-gray-500 dark:text-gray-400">Gerencie suas preferências, perfil e integrações.</p>
@@ -70,20 +70,29 @@ const Settings: React.FC<SettingsProps> = ({ user, theme, toggleTheme, onUpdateU
 
           <form onSubmit={handleProfileUpdate} className="space-y-4">
              <div className="flex items-center gap-4 mb-6">
-                <div className="relative w-20 h-20 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center text-2xl font-bold text-gray-400 overflow-hidden shrink-0">
+                <div className="relative w-24 h-24 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center text-2xl font-bold text-gray-400 overflow-hidden shrink-0 group">
                     {avatarUrl ? (
                         <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
                     ) : (
                         name.charAt(0).toUpperCase()
                     )}
-                    <label className="absolute inset-0 bg-black/50 opacity-0 hover:opacity-100 flex items-center justify-center cursor-pointer transition-opacity">
-                        <Camera className="text-white" size={20} />
-                        <input type="file" className="hidden" accept="image/*" onChange={handleFileChange} />
-                    </label>
+                    
+                    {/* Improved Mobile File Input Trigger */}
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center cursor-pointer transition-opacity opacity-0 group-hover:opacity-100">
+                        <Camera className="text-white" size={24} />
+                    </div>
+                    {/* The input covers the entire parent div but is invisible, ensuring touch works */}
+                    <input 
+                        type="file" 
+                        accept="image/*" 
+                        onChange={handleFileChange}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                        title="Alterar foto"
+                    />
                 </div>
                 <div className="flex-1">
                      <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">Sua foto</p>
-                     <p className="text-xs text-gray-500 dark:text-gray-400">Toque na foto para alterar. Recomendado: Quadrado 400x400px.</p>
+                     <p className="text-xs text-gray-500 dark:text-gray-400">Toque na foto para alterar.</p>
                 </div>
              </div>
 

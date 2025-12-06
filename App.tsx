@@ -22,9 +22,13 @@ const App: React.FC = () => {
   useEffect(() => {
     // Theme Initialization
     const savedTheme = localStorage.getItem('payeasy-theme') as 'light' | 'dark';
-    if (savedTheme) {
-      setTheme(savedTheme);
-      document.documentElement.classList.toggle('dark', savedTheme === 'dark');
+    const initialTheme = savedTheme || 'light';
+    
+    setTheme(initialTheme);
+    if (initialTheme === 'dark') {
+        document.documentElement.classList.add('dark');
+    } else {
+        document.documentElement.classList.remove('dark');
     }
 
     // Check active session
@@ -55,7 +59,12 @@ const App: React.FC = () => {
     const newTheme = theme === 'light' ? 'dark' : 'light';
     setTheme(newTheme);
     localStorage.setItem('payeasy-theme', newTheme);
-    document.documentElement.classList.toggle('dark', newTheme === 'dark');
+    
+    if (newTheme === 'dark') {
+        document.documentElement.classList.add('dark');
+    } else {
+        document.documentElement.classList.remove('dark');
+    }
   };
 
   const mapSupabaseUser = (sbUser: any) => {

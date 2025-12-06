@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Copy, Share2, QrCode, ExternalLink, Check, Loader2, AlertCircle } from 'lucide-react';
+import { Copy, Share2, QrCode, ExternalLink, Check, Loader2, AlertCircle, ShoppingBag } from 'lucide-react';
 import { Product } from '../types';
 import { supabase } from '../services/supabaseClient';
 
@@ -52,16 +52,16 @@ const Links: React.FC = () => {
     setGeneratedLink(`https://fastpayzinmoz.vercel.app/#/checkout/${product.id}`);
   };
 
-  const copyToClipboard = () => {
-    if(generatedLink) {
-        navigator.clipboard.writeText(generatedLink);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    }
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
+  const getLinkForProduct = (id: string) => `https://fastpayzinmoz.vercel.app/#/checkout/${id}`;
+
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
+    <div className="max-w-4xl mx-auto space-y-8 pb-20">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Links de Pagamento</h1>
         <p className="text-gray-500 dark:text-gray-400">Crie links seguros para seus clientes pagarem via M-Pesa, eMola ou Cartão.</p>
@@ -122,7 +122,7 @@ const Links: React.FC = () => {
                                 className="flex-1 p-2 bg-white dark:bg-gray-900 border border-indigo-200 dark:border-indigo-700 rounded text-sm text-gray-600 dark:text-gray-300 outline-none"
                             />
                             <button 
-                                onClick={copyToClipboard}
+                                onClick={() => copyToClipboard(generatedLink)}
                                 className="p-2 bg-white dark:bg-gray-800 border border-indigo-200 dark:border-indigo-700 rounded text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-gray-700 transition-colors"
                                 title="Copiar"
                             >
@@ -167,6 +167,79 @@ const Links: React.FC = () => {
                  </div>
              )}
         </div>
+      </div>
+
+      {/* Link History Table */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
+          <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-6">Seus Links Ativos</h2>
+          
+          <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                  <thead>
+                      <tr className="border-b border-gray-100 dark:border-gray-700 text-sm text-gray-500 dark:text-gray-400">
+                          <th className="pb-3 pl-2">Produto</th>
+                          <th className="pb-3">Preço</th>
+                          <th className="pb-3">Link Direto</th>
+                          <th className="pb-3 text-right pr-2">Ação</th>
+                      </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                      {products.map(product => {
+                          const link = getLinkForProduct(product.id);
+                          return (
+                            <tr key={product.id} className="group hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                                <td className="py-4 pl-2">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-lg bg-gray-100 dark:bg-gray-700 overflow-hidden flex-shrink-0">
+                                            {product.imageUrl ? (
+                                                <img src={product.imageUrl} alt="" className="w-full h-full object-cover"/>
+                                            ) : (
+                                                <div className="w-full h-full flex items-center justify-center text-gray-400"><ShoppingBag size={16}/></div>
+                                            )}
+                                        </div>
+                                        <div>
+                                            <p className="font-medium text-gray-900 dark:text-white text-sm">{product.name}</p>
+                                            <p className="text-xs text-gray-500 dark:text-gray-400">ID: {product.id.slice(0,8)}...</p>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td className="py-4 text-sm text-gray-600 dark:text-gray-300">{product.price.toFixed(2)} MZN</td>
+                                <td className="py-4">
+                                    <div className="flex items-center gap-2 max-w-[200px]">
+                                        <p className="text-xs text-gray-500 truncate bg-gray-50 dark:bg-gray-900 p-1.5 rounded border border-gray-100 dark:border-gray-700 select-all">
+                                            {link}
+                                        </p>
+                                    </div>
+                                </td>
+                                <td className="py-4 text-right pr-2">
+                                    <div className="flex justify-end gap-2">
+                                        <button 
+                                            onClick={() => copyToClipboard(link)}
+                                            className="p-2 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded transition-colors"
+                                            title="Copiar Link"
+                                        >
+                                            <Copy size={16} />
+                                        </button>
+                                        <a 
+                                            href={link}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="p-2 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded transition-colors"
+                                            title="Abrir"
+                                        >
+                                            <ExternalLink size={16} />
+                                        </a>
+                                    </div>
+                                </td>
+                            </tr>
+                          );
+                      })}
+                  </tbody>
+              </table>
+              {products.length === 0 && !loading && (
+                  <p className="text-center text-gray-500 py-8 text-sm">Nenhum produto ativo encontrado.</p>
+              )}
+          </div>
       </div>
     </div>
   );
