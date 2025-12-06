@@ -9,6 +9,8 @@ import Links from './pages/Links';
 import Reports from './pages/Reports';
 import Support from './pages/Support';
 import Settings from './pages/Settings';
+import Finance from './pages/Finance';
+import Checkout from './pages/Checkout'; // Added Import
 import { User, AppRoute } from './types';
 import { supabase } from './services/supabaseClient';
 
@@ -61,7 +63,10 @@ const App: React.FC = () => {
       id: sbUser.id,
       name: sbUser.user_metadata?.name || sbUser.email?.split('@')[0] || 'Usuário',
       email: sbUser.email || '',
-      avatar: sbUser.user_metadata?.avatar_url
+      avatar: sbUser.user_metadata?.avatar_url,
+      // Mapping new metadata fields if they exist
+      pushEnabled: sbUser.user_metadata?.push_enabled,
+      webhookUrl: sbUser.user_metadata?.webhook_url
     });
     setIsLoading(false);
   };
@@ -102,12 +107,16 @@ const App: React.FC = () => {
             <Auth mode="register" />
         } />
 
+        {/* Public Checkout Route */}
+        <Route path="/checkout/:id" element={<Checkout />} />
+
         {/* Protected Routes */}
         <Route path="*" element={
           user ? (
             <Layout user={user} onLogout={handleLogout}>
               <Routes>
                 <Route path={AppRoute.DASHBOARD} element={<Dashboard />} />
+                <Route path={AppRoute.FINANCE} element={<Finance />} />
                 <Route path={AppRoute.PRODUCTS} element={<Products />} />
                 <Route path={AppRoute.LINKS} element={<Links />} />
                 <Route path={AppRoute.REPORTS} element={<Reports />} />

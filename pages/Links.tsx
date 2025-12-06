@@ -47,12 +47,9 @@ const Links: React.FC = () => {
     const product = products.find(p => p.id === selectedProduct);
     if (!product) return;
 
-    // Use specific domain
-    const uniqueId = Math.random().toString(36).substr(2, 6);
-    // Simple slug generation
-    const slug = product.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    
-    setGeneratedLink(`https://payeasy.vercel.app/checkout/${slug}-${uniqueId}`);
+    // Use specific domain and include product ID for the checkout page lookup
+    // Format: https://fastpayzinmoz.vercel.app/checkout/<product_id>
+    setGeneratedLink(`https://fastpayzinmoz.vercel.app/checkout/${product.id}`);
   };
 
   const copyToClipboard = () => {
@@ -97,7 +94,7 @@ const Links: React.FC = () => {
                         >
                             <option value="">Selecione...</option>
                             {products.map(p => (
-                                <option key={p.id} value={p.id}>{p.name} - MT {p.price.toFixed(2)}</option>
+                                <option key={p.id} value={p.id}>{p.name} - {p.price.toFixed(2)} MZN</option>
                             ))}
                         </select>
                     )}

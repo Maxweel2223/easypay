@@ -10,6 +10,7 @@ import {
   X,
   Bell,
   HelpCircle,
+  Wallet,
   Check,
   AlertTriangle,
   Info
@@ -48,6 +49,7 @@ const Layout: React.FC<LayoutProps> = ({ children, user, onLogout }) => {
 
   const navItems = [
     { icon: LayoutDashboard, label: 'Dashboard', route: AppRoute.DASHBOARD },
+    { icon: Wallet, label: 'Financeiro', route: AppRoute.FINANCE },
     { icon: Package, label: 'Produtos', route: AppRoute.PRODUCTS },
     { icon: LinkIcon, label: 'Links de Pagamento', route: AppRoute.LINKS },
     { icon: BarChart3, label: 'Relatórios', route: AppRoute.REPORTS },

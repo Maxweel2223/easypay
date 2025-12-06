@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { User } from '../types';
 import { supabase } from '../services/supabaseClient';
-import { Moon, Sun, Save, User as UserIcon, Camera, Loader2 } from 'lucide-react';
+import { Moon, Sun, Save, User as UserIcon, Camera, Loader2, Bell, Globe } from 'lucide-react';
 
 interface SettingsProps {
   user: User;
@@ -13,6 +13,8 @@ interface SettingsProps {
 const Settings: React.FC<SettingsProps> = ({ user, theme, toggleTheme, onUpdateUser }) => {
   const [name, setName] = useState(user.name);
   const [avatarUrl, setAvatarUrl] = useState(user.avatar || '');
+  const [webhookUrl, setWebhookUrl] = useState(user.webhookUrl || '');
+  const [pushEnabled, setPushEnabled] = useState(user.pushEnabled || false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
@@ -33,14 +35,16 @@ const Settings: React.FC<SettingsProps> = ({ user, theme, toggleTheme, onUpdateU
     setMessage(null);
 
     try {
+      // In a real app, these extra fields would be in a separate 'profiles' table linked to auth
+      // For this demo, we assume we can store them or just simulate the state update
       const { data, error } = await supabase.auth.updateUser({
-        data: { name: name, avatar_url: avatarUrl }
+        data: { name: name, avatar_url: avatarUrl, webhook_url: webhookUrl, push_enabled: pushEnabled }
       });
 
       if (error) throw error;
 
-      onUpdateUser({ name, avatar: avatarUrl });
-      setMessage({ type: 'success', text: 'Perfil atualizado com sucesso!' });
+      onUpdateUser({ name, avatar: avatarUrl, webhookUrl, pushEnabled });
+      setMessage({ type: 'success', text: 'Configurações atualizadas com sucesso!' });
     } catch (err: any) {
       console.error(err);
       setMessage({ type: 'error', text: 'Erro ao atualizar perfil.' });
@@ -53,7 +57,7 @@ const Settings: React.FC<SettingsProps> = ({ user, theme, toggleTheme, onUpdateU
     <div className="max-w-4xl mx-auto space-y-8">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Configurações</h1>
-        <p className="text-gray-500 dark:text-gray-400">Gerencie suas preferências e perfil.</p>
+        <p className="text-gray-500 dark:text-gray-400">Gerencie suas preferências, perfil e integrações.</p>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
@@ -105,6 +109,35 @@ const Settings: React.FC<SettingsProps> = ({ user, theme, toggleTheme, onUpdateU
                 <p className="text-xs text-gray-400 mt-1">O e-mail não pode ser alterado.</p>
              </div>
 
+             <div className="pt-4 border-t border-gray-100 dark:border-gray-700">
+                <h3 className="text-md font-bold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+                    <Globe size={18} /> Integrações
+                </h3>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Webhook URL</label>
+                <input 
+                  type="url" 
+                  placeholder="https://seu-site.com/webhook"
+                  className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none"
+                  value={webhookUrl}
+                  onChange={(e) => setWebhookUrl(e.target.value)}
+                />
+                <p className="text-xs text-gray-400 mt-1">Receba alertas de vendas em tempo real.</p>
+             </div>
+
+             <div className="flex items-center justify-between py-2">
+                 <div className="flex items-center gap-2">
+                     <Bell size={18} className="text-gray-500" />
+                     <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Notificações Push</span>
+                 </div>
+                 <button 
+                    type="button"
+                    onClick={() => setPushEnabled(!pushEnabled)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${pushEnabled ? 'bg-indigo-600' : 'bg-gray-200 dark:bg-gray-600'}`}
+                 >
+                     <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${pushEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                 </button>
+             </div>
+
              {message && (
                  <div className={`p-3 rounded-lg text-sm ${message.type === 'success' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700'}`}>
                      {message.text}
@@ -117,7 +150,7 @@ const Settings: React.FC<SettingsProps> = ({ user, theme, toggleTheme, onUpdateU
                 className="flex items-center justify-center w-full py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-70"
              >
                  {loading ? <Loader2 className="animate-spin mr-2" size={18}/> : <Save size={18} className="mr-2" />}
-                 {loading ? 'Salvando...' : 'Salvar Alterações'}
+                 {loading ? 'Salvar Tudo' : 'Salvar Alterações'}
              </button>
           </form>
         </div>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, MoreVertical, Edit2, Trash2, Tag, Box, Sparkles, X, Loader2, AlertTriangle, CheckCircle, Ban, Upload, MessageCircle, BarChart, Info } from 'lucide-react';
+import { Search, Plus, MoreVertical, Edit2, Trash2, Tag, Box, Sparkles, X, Loader2, AlertTriangle, CheckCircle, Ban, Upload, MessageCircle, BarChart, Info, Link as LinkIcon } from 'lucide-react';
 import { Product, Notification } from '../types';
 import { generateProductDescription, analyzeContentSafety } from '../services/geminiService';
 import { supabase } from '../services/supabaseClient';
@@ -16,6 +16,7 @@ const Products: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [processingImage, setProcessingImage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ type: 'success' | 'error', text: string } | null>(null);
 
@@ -29,7 +30,8 @@ const Products: React.FC = () => {
     imageUrl: '',
     whatsapp: '',
     pixelId: '',
-    analyticsId: ''
+    analyticsId: '',
+    redirectUrl: ''
   });
 
   // Fetch Products from Supabase
@@ -50,7 +52,7 @@ const Products: React.FC = () => {
       const { data, error: dbError } = await supabase
         .from('products')
         .select('*')
-        .eq('user_id', user.id) // Filter by logged in user
+        .eq('user_id', user.id) 
         .order('created_at', { ascending: false });
 
       if (dbError) throw dbError;
@@ -59,7 +61,7 @@ const Products: React.FC = () => {
       console.error('Error fetching products:', err);
       let errorMessage = typeof err === 'string' ? err : err?.message || JSON.stringify(err);
       
-      if (err?.code === '42P01' || err?.code === 'PGRST205') { 
+      if (err?.code === '42P01' || err?.code === 'PGRST205' || err?.code === 'PGRST204') { 
           // SQL for updated schema
           const sqlScript = `
 -- Execute no Supabase SQL Editor
@@ -78,13 +80,16 @@ create table if not exists public.products (
   "rejectionReason" text,
   whatsapp text,
   "pixelId" text,
-  "analyticsId" text
+  "analyticsId" text,
+  "redirectUrl" text
 );
 alter table public.products enable row level security;
 create policy "Users can view their own products" on public.products for select using (auth.uid() = user_id);
 create policy "Users can insert their own products" on public.products for insert with check (auth.uid() = user_id);
 create policy "Users can update their own products" on public.products for update using (auth.uid() = user_id);
 create policy "Users can delete their own products" on public.products for delete using (auth.uid() = user_id);
+-- Permitir leitura pública para o Checkout (IMPORTANTE)
+create policy "Public can view approved products" on public.products for select using (true);
           `;
           console.log(sqlScript);
           setError("Tabela 'products' não encontrada ou desatualizada. Verifique o console para o script SQL.");
@@ -99,10 +104,20 @@ create policy "Users can delete their own products" on public.products for delet
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setProcessingImage(true);
       const reader = new FileReader();
+      
       reader.onloadend = () => {
         setNewProduct(prev => ({ ...prev, imageUrl: reader.result as string }));
+        setProcessingImage(false);
       };
+      
+      reader.onerror = () => {
+          console.error("Erro ao ler arquivo");
+          setProcessingImage(false);
+          alert("Erro ao processar imagem.");
+      };
+
       reader.readAsDataURL(file);
     }
   };
@@ -127,7 +142,6 @@ create policy "Users can delete their own products" on public.products for delet
   };
 
   const triggerVerificationProcess = async (product: Product) => {
-      // Simulate 2 minutes wait (shortened to 10s for demo purposes, but labelled as requested)
       console.log(`Iniciando verificação para ${product.id}. Aguardando análise...`);
       
       setTimeout(async () => {
@@ -145,7 +159,6 @@ create policy "Users can delete their own products" on public.products for delet
               if (!error) {
                   setProducts(prev => prev.map(p => p.id === product.id ? { ...p, status: newStatus, rejectionReason: reason } : p));
                   
-                  // Trigger Global Notification
                   const notif: Notification = {
                       id: Date.now().toString(),
                       title: analysis.safe ? 'Produto Aprovado!' : 'Produto Reprovado',
@@ -163,7 +176,7 @@ create policy "Users can delete their own products" on public.products for delet
           } catch (e) {
               console.error("Falha na verificação automática", e);
           }
-      }, 10000); // Using 10s for demo usability instead of 120s (2 min), but simulating the async process
+      }, 5000); 
   };
 
   const handleSaveProduct = async (e: React.FormEvent) => {
@@ -191,9 +204,10 @@ create policy "Users can delete their own products" on public.products for delet
             whatsapp: newProduct.whatsapp,
             pixelId: newProduct.pixelId,
             analyticsId: newProduct.analyticsId,
+            redirectUrl: newProduct.redirectUrl,
             salesCount: 0,
             user_id: user.id,
-            status: 'pending', // Always pending initially
+            status: 'pending', 
             rejectionReason: null
         };
 
@@ -211,23 +225,24 @@ create policy "Users can delete their own products" on public.products for delet
         }
         
         setIsModalOpen(false);
-        setNewProduct({ name: '', category: '', price: 0, stock: 0, description: '', imageUrl: '', whatsapp: '', pixelId: '', analyticsId: '' });
+        setNewProduct({ name: '', category: '', price: 0, stock: 0, description: '', imageUrl: '', whatsapp: '', pixelId: '', analyticsId: '', redirectUrl: '' });
 
-        setNotification({ type: 'success', text: 'Produto enviado para verificação (aprox. 2 min).' });
+        setNotification({ type: 'success', text: 'Produto enviado para verificação.' });
 
     } catch (err: any) {
         console.error("Error saving product:", err);
 
         if (err?.code === 'PGRST204' || (err?.message && err.message.includes('Could not find the'))) {
              const updateSql = `
--- Execute no Supabase SQL Editor para adicionar as colunas novas:
+-- Execute no Supabase SQL Editor:
 alter table public.products add column if not exists whatsapp text;
 alter table public.products add column if not exists "pixelId" text;
 alter table public.products add column if not exists "analyticsId" text;
+alter table public.products add column if not exists "redirectUrl" text;
              `;
              console.info('%c Colunas faltando! Execute este SQL:', 'color: #ef4444; font-weight: bold;');
              console.log(updateSql);
-             setError("Erro de banco de dados: Colunas novas ausentes. Verifique o console (F12) para o comando SQL de atualização.");
+             setError("Erro de banco de dados: Colunas novas ausentes. Verifique o console para o comando SQL de atualização.");
         } else {
              setError(`Erro ao salvar: ${err.message || 'Falha desconhecida'}`);
         }
@@ -334,7 +349,7 @@ alter table public.products add column if not exists "analyticsId" text;
                             {product.status === 'rejected' ? <Ban size={24} /> : <Loader2 size={24} className="animate-spin" />}
                         </div>
                         <span className={`font-bold ${product.status === 'rejected' ? 'text-red-700 dark:text-red-400' : 'text-blue-700 dark:text-blue-400'}`}>
-                            {product.status === 'rejected' ? 'Produto Proibido' : 'Em Análise (2 min)'}
+                            {product.status === 'rejected' ? 'Produto Proibido' : 'Em Análise'}
                         </span>
                         {product.status === 'rejected' && (
                             <p className="text-xs text-red-600 dark:text-red-300 mt-1 bg-white/80 dark:bg-black/50 px-2 py-1 rounded">
@@ -369,7 +384,7 @@ alter table public.products add column if not exists "analyticsId" text;
                     <p className="text-sm text-gray-500 dark:text-gray-400 mb-4 line-clamp-2">{product.description}</p>
                     
                     <div className="mt-auto pt-4 border-t border-gray-100 dark:border-gray-700 flex items-center justify-between">
-                        <span className="text-lg font-bold text-gray-900 dark:text-white">MT {product.price.toFixed(2)}</span>
+                        <span className="text-lg font-bold text-gray-900 dark:text-white">{product.price.toFixed(2)} MZN</span>
                         <button 
                             onClick={() => handleDeleteProduct(product.id)}
                             className="p-2 text-gray-400 hover:text-red-500 transition-colors z-20"
@@ -400,12 +415,17 @@ alter table public.products add column if not exists "analyticsId" text;
                   <div className="w-full md:w-1/3">
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Imagem do Produto</label>
                       <div className="relative aspect-square bg-gray-100 dark:bg-gray-700 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 flex flex-col items-center justify-center overflow-hidden group hover:border-indigo-500 transition-colors">
-                          {newProduct.imageUrl ? (
+                          {processingImage ? (
+                               <div className="flex flex-col items-center justify-center text-indigo-600">
+                                   <Loader2 className="animate-spin mb-2" />
+                                   <span className="text-xs">Processando...</span>
+                               </div>
+                          ) : newProduct.imageUrl ? (
                               <img src={newProduct.imageUrl} alt="Preview" className="w-full h-full object-cover" />
                           ) : (
                               <div className="text-center p-4">
                                   <Upload className="mx-auto text-gray-400 mb-2" />
-                                  <p className="text-xs text-gray-500">Clique para upload</p>
+                                  <p className="text-xs text-gray-500">Toque para upload</p>
                               </div>
                           )}
                           <input type="file" required accept="image/*" onChange={handleImageUpload} className="absolute inset-0 opacity-0 cursor-pointer" />
@@ -427,7 +447,7 @@ alter table public.products add column if not exists "analyticsId" text;
 
                         <div className="grid grid-cols-2 gap-4">
                              <div>
-                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Preço (MT)</label>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Preço (MZN)</label>
                                 <input 
                                     type="number" 
                                     required
@@ -505,24 +525,18 @@ alter table public.products add column if not exists "analyticsId" text;
                         onChange={handleWhatsappChange}
                       />
                   </div>
-                  <div className="space-y-2">
+                  <div>
                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 flex items-center gap-2">
-                          <BarChart size={16} className="text-blue-500" /> Rastreamento (Opcional)
+                          <LinkIcon size={16} className="text-blue-500" /> Link de Entrega/Retorno
                       </label>
                       <input 
-                        type="text" 
-                        placeholder="Meta Pixel ID"
-                        className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm mb-2"
-                        value={newProduct.pixelId}
-                        onChange={e => setNewProduct({...newProduct, pixelId: e.target.value})}
-                      />
-                       <input 
-                        type="text" 
-                        placeholder="Google Analytics ID (UA-XXXX...)"
+                        type="url" 
+                        placeholder="https://drive.google.com/..."
                         className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
-                        value={newProduct.analyticsId}
-                        onChange={e => setNewProduct({...newProduct, analyticsId: e.target.value})}
+                        value={newProduct.redirectUrl}
+                        onChange={e => setNewProduct({...newProduct, redirectUrl: e.target.value})}
                       />
+                      <p className="text-xs text-gray-500 mt-1">O cliente acessará este link após o pagamento.</p>
                   </div>
               </div>
 

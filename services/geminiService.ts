@@ -2,7 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 
 // Helper to get the AI instance safely
 const getAIClient = (): GoogleGenAI | null => {
-  const apiKey = "AIzaSyAUhh6UslR-eiIoo2iqHIjbN1OesrXWA8o";
+  const apiKey = process.env.API_KEY;
   if (!apiKey) {
     console.warn("API Key not found. AI features will be disabled.");
     return null;

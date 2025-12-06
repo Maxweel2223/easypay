@@ -44,7 +44,7 @@ const Auth: React.FC<AuthProps> = ({ mode, onLogin }) => {
 
         // Check if session is null (email confirmation required)
         if (data.user && !data.session) {
-            setSuccessMessage("Conta criada com sucesso! Por favor, verifique seu e-mail para confirmar o cadastro.");
+            setSuccessMessage("Conta criada com sucesso! Por favor, verifique seu e-mail para confirmar o cadastro antes de entrar.");
             setLoading(false);
             return;
         }
@@ -62,12 +62,20 @@ const Auth: React.FC<AuthProps> = ({ mode, onLogin }) => {
       
     } catch (err: any) {
       console.error(err);
-      if (err.message === 'Invalid login credentials') {
-          setError('E-mail ou senha incorretos.');
-      } else if (err.message.includes('invalid') || err.status === 422) {
-          setError('O formato do e-mail é inválido. Verifique se não há espaços extras.');
+      const msg = err.message || '';
+
+      if (msg === 'Invalid login credentials') {
+          setError('E-mail ou senha incorretos. Tente novamente.');
+      } else if (msg.includes('Email not confirmed')) {
+          setError('Seu e-mail ainda não foi confirmado. Verifique sua caixa de entrada (e spam) e clique no link de confirmação.');
+      } else if (msg.includes('invalid') || err.status === 422) {
+          setError('O formato do e-mail é inválido. Verifique se não há espaços ou erros de digitação.');
+      } else if (msg.includes('User already registered')) {
+          setError('Este e-mail já está cadastrado. Tente fazer login.');
+      } else if (msg.includes('Password should be at least')) {
+          setError('A senha deve ter pelo menos 6 caracteres.');
       } else {
-          setError(err.message || 'Ocorreu um erro. Tente novamente.');
+          setError(msg || 'Ocorreu um erro. Tente novamente.');
       }
     } finally {
       if (!successMessage) { 

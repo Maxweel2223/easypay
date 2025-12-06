@@ -3,6 +3,8 @@ export interface User {
   name: string;
   email: string;
   avatar?: string;
+  pushEnabled?: boolean;
+  webhookUrl?: string;
 }
 
 export interface Product {
@@ -20,6 +22,7 @@ export interface Product {
   whatsapp?: string;
   pixelId?: string;
   analyticsId?: string;
+  redirectUrl?: string; // Link de entrega/retorno
 }
 
 export interface Message {
@@ -36,9 +39,21 @@ export interface Sale {
   productName: string;
   date: string;
   amount: number;
-  method: 'Credit Card' | 'PIX' | 'Google Pay' | 'Apple Pay';
-  status: 'Completed' | 'Pending' | 'Failed';
+  method: 'Credit Card' | 'PIX' | 'Google Pay' | 'Apple Pay' | 'M-Pesa' | 'e-Mola';
+  status: 'Completed' | 'Pending' | 'Cancelled' | 'Failed';
   customerName: string;
+}
+
+export interface Transaction {
+  id: string;
+  type: 'withdrawal';
+  amount: number;
+  fee: number;
+  netAmount: number;
+  status: 'pending' | 'completed' | 'rejected';
+  method: 'M-Pesa' | 'e-Mola';
+  phoneNumber: string;
+  date: string;
 }
 
 export interface Notification {
@@ -57,9 +72,11 @@ export enum AppRoute {
   DASHBOARD = '/dashboard',
   PRODUCTS = '/products',
   LINKS = '/links',
+  FINANCE = '/finance',
   REPORTS = '/reports',
   SETTINGS = '/settings',
-  SUPPORT = '/support'
+  SUPPORT = '/support',
+  CHECKOUT = '/checkout/:id'
 }
 
 export interface ChartData {
