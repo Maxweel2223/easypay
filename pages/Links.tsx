@@ -26,7 +26,7 @@ const Links: React.FC = () => {
             .from('products')
             .select('*')
             .eq('user_id', user.id)
-            .eq('status', 'approved'); // Only show approved products for links
+            .eq('status', 'approved'); 
 
         if (error) throw error;
         if (data) setProducts(data);
@@ -47,8 +47,7 @@ const Links: React.FC = () => {
     const product = products.find(p => p.id === selectedProduct);
     if (!product) return;
 
-    // Updated to use Hash router format (/#/checkout/...)
-    // This ensures it works on Vercel without complex server redirects failing
+    // Use Hash router format (/#/checkout/...)
     setGeneratedLink(`https://fastpayzinmoz.vercel.app/#/checkout/${product.id}`);
   };
 
@@ -56,6 +55,25 @@ const Links: React.FC = () => {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleShare = async () => {
+    if (!generatedLink) return;
+    
+    if (navigator.share) {
+        try {
+            await navigator.share({
+                title: 'Link de Pagamento PayEasy',
+                text: 'Aqui está seu link de pagamento seguro:',
+                url: generatedLink,
+            });
+        } catch (err) {
+            console.log('Error sharing:', err);
+        }
+    } else {
+        copyToClipboard(generatedLink);
+        alert('Link copiado para a área de transferência!');
+    }
   };
 
   const getLinkForProduct = (id: string) => `https://fastpayzinmoz.vercel.app/#/checkout/${id}`;
@@ -146,18 +164,21 @@ const Links: React.FC = () => {
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6 flex flex-col items-center justify-center text-center">
              <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-4">QR Code</h2>
              {generatedLink ? (
-                 <div className="space-y-4">
-                     <div className="bg-white p-2 rounded-lg border border-gray-200 shadow-inner">
+                 <div className="space-y-4 w-full flex flex-col items-center">
+                     <div className="bg-white p-3 rounded-xl border border-gray-200 shadow-inner inline-block">
                         <img 
-                            src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(generatedLink)}`} 
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(generatedLink)}&margin=10`} 
                             alt="QR Code" 
-                            className="w-40 h-40"
+                            className="w-48 h-48 object-contain"
                         />
                      </div>
                      <p className="text-sm text-gray-500 dark:text-gray-400">Envie esta imagem para seu cliente</p>
-                     <button className="flex items-center justify-center w-full py-2 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700">
+                     <button 
+                        onClick={handleShare}
+                        className="flex items-center justify-center w-full py-2 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                     >
                         <Share2 size={16} className="mr-2" />
-                        Compartilhar
+                        Compartilhar Link
                      </button>
                  </div>
              ) : (
@@ -170,17 +191,17 @@ const Links: React.FC = () => {
       </div>
 
       {/* Link History Table */}
-      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6 overflow-hidden">
           <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-6">Seus Links Ativos</h2>
           
           <div className="overflow-x-auto">
               <table className="w-full text-left">
                   <thead>
                       <tr className="border-b border-gray-100 dark:border-gray-700 text-sm text-gray-500 dark:text-gray-400">
-                          <th className="pb-3 pl-2">Produto</th>
-                          <th className="pb-3">Preço</th>
-                          <th className="pb-3">Link Direto</th>
-                          <th className="pb-3 text-right pr-2">Ação</th>
+                          <th className="pb-3 pl-2 min-w-[200px]">Produto</th>
+                          <th className="pb-3 min-w-[100px]">Preço</th>
+                          <th className="pb-3 min-w-[200px]">Link Direto</th>
+                          <th className="pb-3 text-right pr-2 min-w-[100px]">Ação</th>
                       </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-700">

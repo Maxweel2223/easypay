@@ -35,8 +35,6 @@ const Settings: React.FC<SettingsProps> = ({ user, theme, toggleTheme, onUpdateU
     setMessage(null);
 
     try {
-      // In a real app, these extra fields would be in a separate 'profiles' table linked to auth
-      // For this demo, we assume we can store them or just simulate the state update
       const { data, error } = await supabase.auth.updateUser({
         data: { name: name, avatar_url: avatarUrl, webhook_url: webhookUrl, push_enabled: pushEnabled }
       });
@@ -77,16 +75,16 @@ const Settings: React.FC<SettingsProps> = ({ user, theme, toggleTheme, onUpdateU
                         name.charAt(0).toUpperCase()
                     )}
                     
-                    {/* Improved Mobile File Input Trigger */}
-                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center cursor-pointer transition-opacity opacity-0 group-hover:opacity-100">
+                    {/* Fixed Mobile File Input Trigger with higher z-index */}
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center cursor-pointer transition-opacity opacity-0 group-hover:opacity-100 pointer-events-none">
                         <Camera className="text-white" size={24} />
                     </div>
-                    {/* The input covers the entire parent div but is invisible, ensuring touch works */}
+                    {/* The input covers the entire parent div, ensures touch works */}
                     <input 
                         type="file" 
                         accept="image/*" 
                         onChange={handleFileChange}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50"
                         title="Alterar foto"
                     />
                 </div>

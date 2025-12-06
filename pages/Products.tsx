@@ -19,6 +19,7 @@ const Products: React.FC = () => {
   const [processingImage, setProcessingImage] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   // Form State
   const [newProduct, setNewProduct] = useState<Partial<Product>>({
@@ -62,7 +63,6 @@ const Products: React.FC = () => {
       let errorMessage = typeof err === 'string' ? err : err?.message || JSON.stringify(err);
       
       if (err?.code === '42P01' || err?.code === 'PGRST205' || err?.code === 'PGRST204') { 
-          // SQL for updated schema
           const sqlScript = `
 -- Execute no Supabase SQL Editor
 create table if not exists public.products (
@@ -83,7 +83,6 @@ create table if not exists public.products (
   "analyticsId" text,
   "redirectUrl" text
 );
--- VENDAS TABLE (Para funcionar o checkout)
 create table if not exists public.sales (
   id uuid default gen_random_uuid() primary key,
   "productId" uuid,
@@ -93,21 +92,16 @@ create table if not exists public.sales (
   status text,
   "customerName" text,
   customer_whatsapp text,
-  user_id uuid, -- vendedor
+  user_id uuid,
   created_at timestamp default now()
 );
-
 alter table public.products enable row level security;
 alter table public.sales enable row level security;
-
--- Policies Products
 create policy "Users can view their own products" on public.products for select using (auth.uid() = user_id);
 create policy "Users can insert their own products" on public.products for insert with check (auth.uid() = user_id);
 create policy "Users can update their own products" on public.products for update using (auth.uid() = user_id);
 create policy "Users can delete their own products" on public.products for delete using (auth.uid() = user_id);
 create policy "Public can view approved products" on public.products for select using (true);
-
--- Policies Sales (Permitir insert público para o checkout)
 create policy "Public insert sales" on public.sales for insert with check (true);
 create policy "Users can view their sales" on public.sales for select using (auth.uid() = user_id);
           `;
@@ -199,6 +193,28 @@ create policy "Users can view their sales" on public.sales for select using (aut
       }, 5000); 
   };
 
+  const handleOpenModal = (product?: Product) => {
+      if (product) {
+          setEditingId(product.id);
+          setNewProduct({
+              name: product.name,
+              category: product.category,
+              price: product.price,
+              stock: product.stock,
+              description: product.description,
+              imageUrl: product.imageUrl,
+              whatsapp: product.whatsapp,
+              pixelId: product.pixelId,
+              analyticsId: product.analyticsId,
+              redirectUrl: product.redirectUrl
+          });
+      } else {
+          setEditingId(null);
+          setNewProduct({ name: '', category: '', price: 0, stock: 0, description: '', imageUrl: '', whatsapp: '', pixelId: '', analyticsId: '', redirectUrl: '' });
+      }
+      setIsModalOpen(true);
+  };
+
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -214,7 +230,7 @@ create policy "Users can view their sales" on public.sales for select using (aut
             throw new Error("Número de WhatsApp inválido. Use o formato +258...");
         }
 
-        const productToSave = {
+        const productData = {
             name: newProduct.name,
             category: newProduct.category,
             price: Number(newProduct.price),
@@ -225,29 +241,47 @@ create policy "Users can view their sales" on public.sales for select using (aut
             pixelId: newProduct.pixelId,
             analyticsId: newProduct.analyticsId,
             redirectUrl: newProduct.redirectUrl,
-            salesCount: 0,
             user_id: user.id,
+            // If editing, keep existing status unless name/image changes substantially, but for simplicity reset to pending if major changes? 
+            // For now, let's keep status as is for edits or reset to pending if you want re-verification.
+            // Let's reset to pending to be safe on edits.
             status: 'pending', 
             rejectionReason: null
         };
 
-        const { data, error } = await supabase
-            .from('products')
-            .insert([productToSave])
-            .select();
+        let savedProduct: Product | null = null;
 
-        if (error) throw error;
+        if (editingId) {
+             const { data, error } = await supabase
+                .from('products')
+                .update(productData)
+                .eq('id', editingId)
+                .select();
+             if (error) throw error;
+             if (data) {
+                 savedProduct = data[0] as Product;
+                 setProducts(products.map(p => p.id === editingId ? savedProduct! : p));
+             }
+             setNotification({ type: 'success', text: 'Produto atualizado com sucesso. Nova verificação iniciada.' });
+        } else {
+            const { data, error } = await supabase
+                .from('products')
+                .insert([{ ...productData, salesCount: 0 }])
+                .select();
+            if (error) throw error;
+            if (data) {
+                savedProduct = data[0] as Product;
+                setProducts([savedProduct, ...products]);
+            }
+            setNotification({ type: 'success', text: 'Produto criado com sucesso. Verificação iniciada.' });
+        }
 
-        if (data) {
-            const savedProduct = data[0] as Product;
-            setProducts([savedProduct, ...products]);
+        if (savedProduct) {
             triggerVerificationProcess(savedProduct);
         }
         
         setIsModalOpen(false);
         setNewProduct({ name: '', category: '', price: 0, stock: 0, description: '', imageUrl: '', whatsapp: '', pixelId: '', analyticsId: '', redirectUrl: '' });
-
-        setNotification({ type: 'success', text: 'Produto enviado para verificação.' });
 
     } catch (err: any) {
         console.error("Error saving product:", err);
@@ -292,7 +326,7 @@ create policy "Users can view their sales" on public.sales for select using (aut
           <p className="text-gray-500 dark:text-gray-400">Gerencie seu catálogo e estoque.</p>
         </div>
         <button 
-          onClick={() => setIsModalOpen(true)}
+          onClick={() => handleOpenModal()}
           className="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"
         >
           <Plus size={20} className="mr-2" />
@@ -358,9 +392,12 @@ create policy "Users can view their sales" on public.sales for select using (aut
                             {product.status === 'rejected' ? 'Produto Proibido' : 'Em Análise'}
                         </span>
                         {product.status === 'rejected' && (
-                            <p className="text-xs text-red-600 dark:text-red-300 mt-1 bg-white/80 dark:bg-black/50 px-2 py-1 rounded">
-                                {product.rejectionReason || "Violação de termos"}
-                            </p>
+                            <div className="flex gap-2 mt-2">
+                                <p className="text-xs text-red-600 dark:text-red-300 bg-white/80 dark:bg-black/50 px-2 py-1 rounded">
+                                    {product.rejectionReason || "Violação de termos"}
+                                </p>
+                                <button onClick={(e) => { e.stopPropagation(); handleDeleteProduct(product.id); }} className="bg-red-600 text-white p-1 rounded hover:bg-red-700"><Trash2 size={16} /></button>
+                            </div>
                         )}
                     </div>
                 )}
@@ -371,9 +408,14 @@ create policy "Users can view their sales" on public.sales for select using (aut
                 ) : (
                     <div className="w-full h-full flex items-center justify-center text-gray-400"><Box size={32}/></div>
                 )}
-                <div className="absolute top-2 right-2">
-                    <button className="p-1.5 bg-white/90 rounded-full text-gray-600 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity shadow-sm">
-                    <Edit2 size={16} />
+                {/* Edit Button - Visible on hover or status ok */}
+                <div className="absolute top-2 right-2 flex gap-2">
+                    <button 
+                        onClick={() => handleOpenModal(product)}
+                        className="p-1.5 bg-white/90 rounded-full text-gray-600 hover:text-indigo-600 hover:bg-white transition-all shadow-sm z-20"
+                        title="Editar"
+                    >
+                        <Edit2 size={16} />
                     </button>
                 </div>
                 </div>
@@ -394,6 +436,7 @@ create policy "Users can view their sales" on public.sales for select using (aut
                         <button 
                             onClick={() => handleDeleteProduct(product.id)}
                             className="p-2 text-gray-400 hover:text-red-500 transition-colors z-20"
+                            title="Excluir"
                         >
                         <Trash2 size={18} />
                         </button>
@@ -404,12 +447,12 @@ create policy "Users can view their sales" on public.sales for select using (aut
         </div>
       )}
 
-      {/* Add Product Modal */}
+      {/* Add/Edit Product Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-2xl shadow-xl max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center p-6 border-b border-gray-100 dark:border-gray-700">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Novo Produto</h2>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">{editingId ? 'Editar Produto' : 'Novo Produto'}</h2>
               <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
                 <X size={24} />
               </button>
@@ -417,7 +460,7 @@ create policy "Users can view their sales" on public.sales for select using (aut
             <form onSubmit={handleSaveProduct} className="p-6 space-y-6">
               
               <div className="flex flex-col md:flex-row gap-6">
-                  {/* Image Upload Mobile Fix: Overlay Input */}
+                  {/* Image Upload Mobile Fix: Z-index adjusted */}
                   <div className="w-full md:w-1/3">
                       <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Imagem do Produto</label>
                       <div className="relative aspect-square bg-gray-100 dark:bg-gray-700 rounded-xl border-2 border-dashed border-gray-300 dark:border-gray-600 flex flex-col items-center justify-center overflow-hidden group hover:border-indigo-500 transition-colors">
@@ -434,13 +477,12 @@ create policy "Users can view their sales" on public.sales for select using (aut
                                   <p className="text-xs text-gray-500">Toque para upload</p>
                               </div>
                           )}
-                          {/* Important: Absolute full-size input with opacity 0 handles clicks perfectly on mobile */}
+                          {/* Corrected Overlay input for mobile touch */}
                           <input 
                             type="file" 
-                            required 
                             accept="image/*" 
                             onChange={handleImageUpload} 
-                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10" 
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50" 
                           />
                       </div>
                   </div>
@@ -544,7 +586,7 @@ create policy "Users can view their sales" on public.sales for select using (aut
                       </label>
                       <input 
                         type="url" 
-                        placeholder="https://drive.google.com/..."
+                        placeholder="https://link.deentrega.com/..."
                         className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
                         value={newProduct.redirectUrl}
                         onChange={e => setNewProduct({...newProduct, redirectUrl: e.target.value})}
@@ -566,7 +608,7 @@ create policy "Users can view their sales" on public.sales for select using (aut
                   disabled={isGenerating}
                   className="flex-1 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium shadow-md disabled:opacity-70"
                 >
-                  {isGenerating ? 'Analisando...' : 'Salvar Produto'}
+                  {isGenerating ? 'Analisando...' : (editingId ? 'Salvar Alterações' : 'Salvar Produto')}
                 </button>
               </div>
             </form>

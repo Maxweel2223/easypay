@@ -19,7 +19,8 @@ const Checkout: React.FC = () => {
   const [formData, setFormData] = useState({
       name: '',
       email: '',
-      whatsapp: '',
+      whatsapp: '', // Contact
+      paymentPhone: '', // Payment
       paymentMethod: 'M-Pesa' as 'M-Pesa' | 'e-Mola'
   });
 
@@ -56,7 +57,7 @@ const Checkout: React.FC = () => {
       setFormData({ ...formData, [e.target.name]: e.target.value });
   };
 
-  const validatePhonePrefix = (phone: string, method: string) => {
+  const validatePaymentPrefix = (phone: string, method: string) => {
       const cleanPhone = phone.replace(/\D/g, '');
       if (cleanPhone.length < 2) return true; // Let user type
 
@@ -79,29 +80,35 @@ const Checkout: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
       e.preventDefault();
       
-      if (!formData.name || !formData.whatsapp) {
-          alert("Por favor preencha os campos obrigatórios.");
+      if (!formData.name || !formData.whatsapp || !formData.paymentPhone) {
+          alert("Por favor preencha todos os campos obrigatórios.");
           return;
       }
 
-      const cleanPhone = formData.whatsapp.replace(/\D/g, '');
+      const cleanWhatsApp = formData.whatsapp.replace(/\D/g, '');
+      const cleanPaymentPhone = formData.paymentPhone.replace(/\D/g, '');
       
-      // Validação de Prefixo Estrita
+      // Validação de Prefixo Estrita para PAGAMENTO
       if (formData.paymentMethod === 'M-Pesa') {
-          if (!['84', '85'].includes(cleanPhone.substring(0, 2))) {
-              alert("Para M-Pesa, o número deve começar com 84 ou 85.");
+          if (!['84', '85'].includes(cleanPaymentPhone.substring(0, 2))) {
+              alert("Para M-Pesa, o número de PAGAMENTO deve começar com 84 ou 85.");
               return;
           }
       } else if (formData.paymentMethod === 'e-Mola') {
-          if (!['86', '87'].includes(cleanPhone.substring(0, 2))) {
-              alert("Para e-Mola, o número deve começar com 86 ou 87.");
+          if (!['86', '87'].includes(cleanPaymentPhone.substring(0, 2))) {
+              alert("Para e-Mola, o número de PAGAMENTO deve começar com 86 ou 87.");
               return;
           }
       }
 
-      if (cleanPhone.length !== 9) {
-          alert("O número de telefone deve ter 9 dígitos.");
+      if (cleanPaymentPhone.length !== 9) {
+          alert("O número de pagamento deve ter 9 dígitos.");
           return;
+      }
+      
+      if (cleanWhatsApp.length < 9) {
+           alert("Número de WhatsApp inválido.");
+           return;
       }
 
       setStep('processing');
@@ -117,7 +124,7 @@ const Checkout: React.FC = () => {
                 method: formData.paymentMethod,
                 status: 'Completed',
                 customerName: formData.name,
-                customer_whatsapp: cleanPhone,
+                customer_whatsapp: cleanWhatsApp,
                 user_id: product.user_id // Vendedor
             }]);
             
@@ -327,10 +334,10 @@ const Checkout: React.FC = () => {
                        />
                    </div>
 
-                   {/* 3. WhatsApp (Com Validação Visual) */}
+                   {/* 3. WhatsApp para Contato (Input 1) */}
                    <div>
                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                           WhatsApp ({formData.paymentMethod}) <span className="text-red-500">*</span>
+                           WhatsApp para Entrega/Contato <span className="text-red-500">*</span>
                        </label>
                        <div className="relative">
                             <span className="absolute left-3.5 top-4 text-gray-400"><Smartphone size={18}/></span>
@@ -338,19 +345,42 @@ const Checkout: React.FC = () => {
                                     type="tel"
                                     name="whatsapp"
                                     required
-                                    className={`w-full pl-10 p-3.5 border rounded-xl focus:ring-2 outline-none transition-all bg-gray-50 focus:bg-white ${
-                                        formData.whatsapp && !validatePhonePrefix(formData.whatsapp, formData.paymentMethod) 
-                                        ? 'border-red-300 focus:ring-red-200' 
-                                        : 'border-gray-300 focus:ring-indigo-500'
-                                    }`}
-                                    placeholder={formData.paymentMethod === 'M-Pesa' ? "84 ou 85..." : "86 ou 87..."}
+                                    className="w-full pl-10 p-3.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all bg-gray-50 focus:bg-white"
+                                    placeholder="84/85/86/87..."
                                     value={formData.whatsapp}
                                     onChange={handleInputChange}
                                     disabled={step === 'processing'}
                             />
                        </div>
                        <p className="text-xs text-gray-500 mt-1.5 ml-1">
-                           {formData.paymentMethod === 'M-Pesa' ? 'Aceitamos apenas números Vodacom (84/85).' : 'Aceitamos apenas números Movitel (86/87).'}
+                           Onde enviaremos o comprovante e informações do pedido.
+                       </p>
+                   </div>
+
+                   {/* 4. Número para Pagamento (Input 2 - Validado) */}
+                   <div>
+                       <label className="block text-sm font-medium text-gray-700 mb-1">
+                           Número {formData.paymentMethod} (Pagamento) <span className="text-red-500">*</span>
+                       </label>
+                       <div className="relative">
+                            <span className="absolute left-3.5 top-4 text-gray-400"><CreditCard size={18}/></span>
+                            <input 
+                                    type="tel"
+                                    name="paymentPhone"
+                                    required
+                                    className={`w-full pl-10 p-3.5 border rounded-xl focus:ring-2 outline-none transition-all bg-gray-50 focus:bg-white ${
+                                        formData.paymentPhone && !validatePaymentPrefix(formData.paymentPhone, formData.paymentMethod) 
+                                        ? 'border-red-300 focus:ring-red-200' 
+                                        : 'border-gray-300 focus:ring-indigo-500'
+                                    }`}
+                                    placeholder={formData.paymentMethod === 'M-Pesa' ? "84 ou 85..." : "86 ou 87..."}
+                                    value={formData.paymentPhone}
+                                    onChange={handleInputChange}
+                                    disabled={step === 'processing'}
+                            />
+                       </div>
+                       <p className="text-xs text-gray-500 mt-1.5 ml-1">
+                           {formData.paymentMethod === 'M-Pesa' ? 'Deve começar com 84 ou 85.' : 'Deve começar com 86 ou 87.'}
                        </p>
                    </div>
 
