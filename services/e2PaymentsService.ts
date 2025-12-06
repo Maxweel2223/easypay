@@ -35,7 +35,8 @@ const getAccessToken = async (): Promise<string> => {
     });
 
     if (!response.ok) {
-      throw new Error(`Falha na autenticação: ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`Falha na autenticação (${response.status}): ${errorText}`);
     }
 
     const data = await response.json();
@@ -70,11 +71,14 @@ export const initiateMpesaPayment = async (
         cleanPhone = cleanPhone.substring(3);
     }
 
+    // Sanitiza a referência (apenas alfanuméricos) para evitar rejeição da API
+    const cleanRef = reference.replace(/[^a-zA-Z0-9]/g, '');
+
     const payload = {
       client_id: CLIENT_ID,
       amount: amount.toString(), // API espera string
       phone: cleanPhone,
-      reference: reference,
+      reference: cleanRef,
     };
 
     const response = await fetch(
@@ -90,15 +94,28 @@ export const initiateMpesaPayment = async (
       }
     );
 
-    const result = await response.json();
+    // Lê a resposta como texto primeiro para evitar erros de parse se não for JSON
+    const responseText = await response.text();
+    let result;
+    
+    try {
+        result = JSON.parse(responseText);
+    } catch (e) {
+        // Se falhar o parse, usa o texto puro como mensagem
+        result = { message: responseText };
+    }
 
     if (!response.ok) {
-      throw new Error(result.message || "Erro ao processar pagamento no M-Pesa");
+      console.error("Erro detalhado da API:", result);
+      // Tenta extrair a mensagem de erro de vários formatos possíveis
+      const errorMsg = result.message || result.error || result.description || JSON.stringify(result);
+      throw new Error(errorMsg);
     }
 
     return result;
   } catch (error: any) {
     console.error("Erro no pagamento M-Pesa:", error);
+    // Repassa o erro original para o frontend mostrar no alert
     throw new Error(error.message || "Falha na comunicação com o gateway de pagamento.");
   }
 };
