@@ -47,9 +47,9 @@ const Links: React.FC = () => {
     const product = products.find(p => p.id === selectedProduct);
     if (!product) return;
 
-    // Use specific domain and include product ID for the checkout page lookup
-    // Format: https://fastpayzinmoz.vercel.app/checkout/<product_id>
-    setGeneratedLink(`https://fastpayzinmoz.vercel.app/checkout/${product.id}`);
+    // Updated to use Hash router format (/#/checkout/...)
+    // This ensures it works on Vercel without complex server redirects failing
+    setGeneratedLink(`https://fastpayzinmoz.vercel.app/#/checkout/${product.id}`);
   };
 
   const copyToClipboard = () => {

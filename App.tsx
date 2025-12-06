@@ -10,7 +10,7 @@ import Reports from './pages/Reports';
 import Support from './pages/Support';
 import Settings from './pages/Settings';
 import Finance from './pages/Finance';
-import Checkout from './pages/Checkout'; // Added Import
+import Checkout from './pages/Checkout';
 import { User, AppRoute } from './types';
 import { supabase } from './services/supabaseClient';
 
@@ -107,7 +107,7 @@ const App: React.FC = () => {
             <Auth mode="register" />
         } />
 
-        {/* Public Checkout Route */}
+        {/* Public Checkout Route - Now accessible via /#/checkout/:id */}
         <Route path="/checkout/:id" element={<Checkout />} />
 
         {/* Protected Routes */}
