@@ -31,14 +31,25 @@ const App: React.FC = () => {
         document.documentElement.classList.remove('dark');
     }
 
-    // Check active session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) {
-        mapSupabaseUser(session.user);
-      } else {
-        setIsLoading(false);
-      }
-    });
+    // Check active session with error handling
+    const checkSession = async () => {
+        try {
+            const { data: { session }, error } = await supabase.auth.getSession();
+            if (error) throw error;
+            
+            if (session?.user) {
+                mapSupabaseUser(session.user);
+            } else {
+                setIsLoading(false);
+            }
+        } catch (error) {
+            console.error("Session check failed (Network or Auth error):", error);
+            // Even if auth fails, stop loading so user can try to login again or see welcome screen
+            setIsLoading(false);
+        }
+    };
+
+    checkSession();
 
     // Listen for changes
     const {
@@ -94,7 +105,10 @@ const App: React.FC = () => {
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
+        <div className="flex flex-col items-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mb-4"></div>
+            <p className="text-gray-500 text-sm">Carregando...</p>
+        </div>
       </div>
     );
   }
@@ -126,8 +140,8 @@ const App: React.FC = () => {
               <Routes>
                 <Route path={AppRoute.DASHBOARD} element={<Dashboard />} />
                 <Route path={AppRoute.FINANCE} element={<Finance />} />
-                <Route path={AppRoute.PRODUCTS} element={<Products />} />
-                <Route path={AppRoute.LINKS} element={<Links />} />
+                <Route path={AppRoute.PRODUCTS} element={<Products user={user} />} />
+                <Route path={AppRoute.LINKS} element={<Links user={user} />} />
                 <Route path={AppRoute.REPORTS} element={<Reports />} />
                 <Route path={AppRoute.SUPPORT} element={<Support user={user} />} />
                 <Route path={AppRoute.SETTINGS} element={

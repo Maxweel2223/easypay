@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Eye, EyeOff, Facebook, Mail, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, Facebook, Mail, AlertCircle, PlayCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { AppRoute } from '../types';
@@ -25,7 +25,6 @@ const Auth: React.FC<AuthProps> = ({ mode, onLogin }) => {
     setError(null);
     setSuccessMessage(null);
 
-    // Sanitize email input
     const cleanEmail = email.trim();
 
     try {
@@ -42,7 +41,6 @@ const Auth: React.FC<AuthProps> = ({ mode, onLogin }) => {
         
         if (signUpError) throw signUpError;
 
-        // Check if session is null (email confirmation required)
         if (data.user && !data.session) {
             setSuccessMessage("Conta criada com sucesso! Por favor, verifique seu e-mail para confirmar o cadastro antes de entrar.");
             setLoading(false);
@@ -58,7 +56,6 @@ const Auth: React.FC<AuthProps> = ({ mode, onLogin }) => {
       }
       
       if (onLogin) onLogin();
-      // Navigation to Dashboard is handled by App.tsx detecting user state change
       
     } catch (err: any) {
       console.error(err);
@@ -74,6 +71,8 @@ const Auth: React.FC<AuthProps> = ({ mode, onLogin }) => {
           setError('Este e-mail já está cadastrado. Tente fazer login.');
       } else if (msg.includes('Password should be at least')) {
           setError('A senha deve ter pelo menos 6 caracteres.');
+      } else if (msg.includes('Failed to fetch')) {
+          setError('Falha de conexão com o servidor. Verifique sua conexão de internet.');
       } else {
           setError(msg || 'Ocorreu um erro. Tente novamente.');
       }
@@ -120,8 +119,11 @@ const Auth: React.FC<AuthProps> = ({ mode, onLogin }) => {
         <div className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
           
           {error && (
-            <div className="mb-4 bg-red-50 border-l-4 border-red-500 p-4 flex items-center rounded-r-md">
-              <AlertCircle size={20} className="text-red-500 mr-2 flex-shrink-0" />
+            <div className="mb-4 bg-red-50 border-l-4 border-red-500 p-4 flex flex-col items-start rounded-r-md">
+              <div className="flex items-center mb-1">
+                  <AlertCircle size={20} className="text-red-500 mr-2 flex-shrink-0" />
+                  <p className="text-sm font-bold text-red-700">Erro de Login</p>
+              </div>
               <p className="text-sm text-red-700">{error}</p>
             </div>
           )}

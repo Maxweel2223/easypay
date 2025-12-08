@@ -1,7 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Copy, Share2, QrCode, ExternalLink, Check, Loader2, AlertCircle, ShoppingBag, History } from 'lucide-react';
-import { Product } from '../types';
+import { Copy, Share2, QrCode, ExternalLink, Check, Loader2, AlertCircle, ShoppingBag, History, RefreshCw, Database, ServerOff } from 'lucide-react';
+import { Product, User } from '../types';
 import { supabase } from '../services/supabaseClient';
+
+const MOCK_PRODUCTS: Product[] = [
+    { id: '1', name: 'Fone Bluetooth Pro', category: 'Eletrônicos', price: 1500, stock: 10, description: 'Fone com cancelamento de ruído.', status: 'approved', salesCount: 5, user_id: 'mock', created_at: new Date().toISOString() } as any,
+    { id: '2', name: 'Smartwatch Series 5', category: 'Acessórios', price: 2500, stock: 5, description: 'Relógio inteligente à prova d\'água.', status: 'approved', salesCount: 2, user_id: 'mock', created_at: new Date().toISOString() } as any,
+];
 
 interface GeneratedLink {
     id: string;
@@ -12,7 +17,11 @@ interface GeneratedLink {
     created_at: string;
 }
 
-const Links: React.FC = () => {
+interface LinksProps {
+    user: User;
+}
+
+const Links: React.FC<LinksProps> = ({ user }) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [generatedLinksHistory, setGeneratedLinksHistory] = useState<GeneratedLink[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<string>('');
@@ -20,18 +29,22 @@ const Links: React.FC = () => {
   const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isCorsError, setIsCorsError] = useState(false);
+  const [showSqlHelp, setShowSqlHelp] = useState(false);
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    if (user) {
+        fetchData();
+    }
+  }, [user]);
 
   const fetchData = async () => {
     try {
         setLoading(true);
         setError(null);
-        const { data: { user } } = await supabase.auth.getUser();
-        if(!user) return;
-
+        setShowSqlHelp(false);
+        setIsCorsError(false);
+        
         // Fetch Products
         const { data: prodData, error: prodError } = await supabase
             .from('products')
@@ -70,41 +83,56 @@ const Links: React.FC = () => {
 
     } catch (err: any) {
         console.error("Error loading data:", err);
-        if (err?.code === '42P01' || err?.code === 'PGRST205') {
-             // SQL Script para criar a tabela payment_links
-             const sqlFix = `
--- COPY AND RUN THIS IN SUPABASE SQL EDITOR --
-create table if not exists public.payment_links (
-  id uuid default gen_random_uuid() primary key,
-  user_id uuid references auth.users not null,
-  product_id uuid references public.products not null,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null
-);
-alter table public.payment_links enable row level security;
-create policy "Users can view their own links" on public.payment_links for select using (auth.uid() = user_id);
-create policy "Users can insert their own links" on public.payment_links for insert with check (auth.uid() = user_id);
-             `;
-             console.warn("SQL FIX FOR LINKS:", sqlFix);
-             setError("Tabela 'payment_links' não encontrada. Verifique o console para o script de correção.");
-        } else {
-             setError("Não foi possível carregar seus dados.");
+        let msg = "Erro ao carregar dados.";
+        
+        if (err.message?.includes('fetch') || err.message?.includes('network')) {
+            msg = "Conexão bloqueada pelo navegador (CORS/Blob).";
+            setIsCorsError(true);
         }
+        else if (err.code === '42P01' || err.code === '400') {
+            msg = "Falha ao acessar tabelas. Verifique o banco de dados.";
+            setShowSqlHelp(true);
+        } else {
+            msg = err.message || "Erro desconhecido";
+        }
+        
+        setError(msg);
     } finally {
         setLoading(false);
     }
+  };
+
+  const loadMockData = () => {
+      setProducts(MOCK_PRODUCTS);
+      setGeneratedLinksHistory([
+          { id: '101', product_id: '1', product_name: 'Fone Bluetooth Pro', product_image: '', price: 1500, created_at: new Date().toLocaleDateString() }
+      ]);
+      setError(null);
+      setIsCorsError(false);
   };
 
   const handleGenerate = async () => {
     if(!selectedProduct) return;
     const product = products.find(p => p.id === selectedProduct);
     if (!product) return;
+    
+    // DEMO MODE
+    if (isCorsError || product.user_id === 'mock') {
+         setGeneratedLinksHistory(prev => [{
+            id: Date.now().toString(), 
+            product_id: product.id,
+            product_name: product.name,
+            product_image: product.imageUrl || '',
+            price: product.price,
+            created_at: new Date().toLocaleDateString()
+        }, ...prev]);
+        setGeneratedLink(`https://fastpayzinmoz.vercel.app/#/checkout/${product.id}`);
+        return;
+    }
 
     try {
         setLoading(true);
-        const { data: { user } } = await supabase.auth.getUser();
-        if(!user) throw new Error("User not found");
 
-        // Save to DB History
         const { error } = await supabase.from('payment_links').insert([{
             user_id: user.id,
             product_id: product.id
@@ -112,9 +140,8 @@ create policy "Users can insert their own links" on public.payment_links for ins
 
         if (error) throw error;
 
-        // Update local list
         setGeneratedLinksHistory(prev => [{
-            id: Date.now().toString(), // temp id
+            id: Date.now().toString(), 
             product_id: product.id,
             product_name: product.name,
             product_image: product.imageUrl || '',
@@ -122,11 +149,14 @@ create policy "Users can insert their own links" on public.payment_links for ins
             created_at: new Date().toLocaleDateString()
         }, ...prev]);
 
-        // Show link
         setGeneratedLink(`https://fastpayzinmoz.vercel.app/#/checkout/${product.id}`);
-    } catch (err) {
+    } catch (err: any) {
         console.error("Error generating link", err);
-        alert("Erro ao salvar histórico do link.");
+        alert(`Erro ao gerar link: ${err.message || 'Falha de conexão'}`);
+        if (err.code === '42P01') {
+            setShowSqlHelp(true);
+            setError("Tabela 'payment_links' não existe.");
+        }
     } finally {
         setLoading(false);
     }
@@ -176,9 +206,60 @@ create policy "Users can insert their own links" on public.payment_links for ins
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Selecione o Produto (Aprovado)</label>
                     
                     {error ? (
-                         <div className="flex items-center text-sm text-red-600 bg-red-50 p-3 rounded-lg border border-red-100">
-                             <AlertCircle size={16} className="mr-2" />
-                             {error}
+                         <div className="flex flex-col gap-4 text-sm text-red-600 bg-red-50 p-4 rounded-lg border border-red-100 w-full">
+                             <div className="flex items-center">
+                                <AlertCircle size={16} className="mr-2 shrink-0" />
+                                <div>
+                                    <span className="font-semibold">Erro:</span> {error}
+                                </div>
+                             </div>
+
+                             {isCorsError && (
+                                 <div className="mt-1">
+                                    <button 
+                                        onClick={loadMockData}
+                                        className="text-xs bg-red-100 hover:bg-red-200 text-red-800 px-3 py-1.5 rounded font-bold transition-colors"
+                                    >
+                                        Usar Modo Demonstração
+                                    </button>
+                                 </div>
+                             )}
+
+                             {showSqlHelp && (
+                                <div className="bg-white dark:bg-gray-800 p-3 rounded border border-gray-200 dark:border-gray-700 shadow-sm">
+                                    <h4 className="font-bold text-gray-900 dark:text-white flex items-center gap-2 mb-2 text-xs">
+                                        <Database size={14} /> Tabela Faltando
+                                    </h4>
+                                    <p className="text-gray-500 text-xs mb-2">Rode este SQL no Supabase:</p>
+                                    <pre className="bg-gray-900 text-gray-300 p-2 rounded text-[10px] overflow-x-auto whitespace-pre-wrap font-mono mb-2">
+{`create table if not exists public.payment_links (
+  id uuid default gen_random_uuid() primary key,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  user_id uuid references auth.users not null,
+  product_id uuid references public.products not null
+);
+alter table public.payment_links enable row level security;
+create policy "Users can view their own links" on public.payment_links for select using (auth.uid() = user_id);
+create policy "Users can insert their own links" on public.payment_links for insert with check (auth.uid() = user_id);`}
+                                    </pre>
+                                    <button 
+                                        onClick={() => {
+                                            const sql = `create table if not exists public.payment_links ( id uuid default gen_random_uuid() primary key, created_at timestamp with time zone default timezone('utc'::text, now()) not null, user_id uuid references auth.users not null, product_id uuid references public.products not null ); alter table public.payment_links enable row level security; create policy "Users can view their own links" on public.payment_links for select using (auth.uid() = user_id); create policy "Users can insert their own links" on public.payment_links for insert with check (auth.uid() = user_id);`;
+                                            navigator.clipboard.writeText(sql);
+                                            alert("SQL copiado!");
+                                        }}
+                                        className="w-full bg-indigo-100 text-indigo-700 px-2 py-1.5 rounded text-xs font-bold hover:bg-indigo-200"
+                                    >
+                                        Copiar SQL
+                                    </button>
+                                </div>
+                             )}
+
+                             {!isCorsError && (
+                                <button onClick={fetchData} className="self-start px-3 py-1 bg-red-100 hover:bg-red-200 rounded text-xs font-medium flex items-center gap-1">
+                                    <RefreshCw size={12} /> Tentar Novamente
+                                </button>
+                             )}
                          </div>
                     ) : products.length === 0 && !loading ? (
                          <p className="text-sm text-amber-600 bg-amber-50 p-3 rounded-lg">Você não possui produtos aprovados para gerar links.</p>

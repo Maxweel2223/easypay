@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { User } from '../types';
 import { supabase } from '../services/supabaseClient';
-import { Moon, Sun, Save, User as UserIcon, Camera, Loader2, Bell, Globe, X, Crop, CheckCircle } from 'lucide-react';
+import { Moon, Sun, Save, User as UserIcon, Camera, Loader2, Bell, Globe, X, Crop, CheckCircle, Database, Copy } from 'lucide-react';
 
 interface SettingsProps {
   user: User;
@@ -28,12 +28,18 @@ const Settings: React.FC<SettingsProps> = ({ user, theme, toggleTheme, onUpdateU
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (!file.type.startsWith('image/')) {
+        alert('Por favor, selecione uma imagem.');
+        return;
+      }
       const reader = new FileReader();
       reader.onloadend = () => {
         setTempImage(reader.result as string);
         setShowCropModal(true);
       };
+      reader.onerror = () => alert('Erro ao carregar a imagem.');
       reader.readAsDataURL(file);
+      e.target.value = ''; // Reset input to allow re-selection
     }
   };
 
@@ -87,15 +93,13 @@ const Settings: React.FC<SettingsProps> = ({ user, theme, toggleTheme, onUpdateU
       if (!webhookUrl) return;
       setTestingWebhook(true);
       try {
-          // Simulate a POST request (this might fail due to CORS in browser if target doesn't allow it, 
-          // but demonstrates intent. Usually done via backend proxy).
+          // Simulate a POST request
           const res = await fetch(webhookUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ event: 'test_ping', message: 'PayEasy Webhook Test', timestamp: new Date() })
-          }).catch(() => null); // Catch network errors (CORS)
+          }).catch(() => null); 
 
-          // Even if CORS fails, we assume configuration is valid structure
           setMessage({ type: 'success', text: 'Disparo de teste enviado! Verifique seu servidor.' });
       } catch (e) {
           setMessage({ type: 'error', text: 'Erro ao testar webhook.' });
@@ -126,6 +130,84 @@ const Settings: React.FC<SettingsProps> = ({ user, theme, toggleTheme, onUpdateU
     }
   };
 
+  const sqlScript = `-- 1. Tabela de Produtos
+create table if not exists public.products (
+  id uuid default gen_random_uuid() primary key,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  name text not null,
+  description text,
+  price numeric not null,
+  stock integer default 0,
+  category text,
+  "imageUrl" text,
+  user_id uuid references auth.users not null,
+  status text default 'pending',
+  "rejectionReason" text,
+  whatsapp text,
+  "pixelId" text,
+  "analyticsId" text,
+  "redirectUrl" text,
+  "salesCount" integer default 0
+);
+
+-- 2. Tabela de Links de Pagamento
+create table if not exists public.payment_links (
+  id uuid default gen_random_uuid() primary key,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  user_id uuid references auth.users not null,
+  product_id uuid references public.products not null
+);
+
+-- 3. Tabela de Vendas (Sales)
+create table if not exists public.sales (
+  id uuid default gen_random_uuid() primary key,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  "productId" uuid references public.products not null,
+  "productName" text,
+  amount numeric not null,
+  method text,
+  status text default 'Pending',
+  "customerName" text,
+  customer_whatsapp text,
+  user_id uuid references auth.users not null
+);
+
+-- 4. Tabela de Mensagens de Suporte
+create table if not exists public.support_messages (
+  id uuid default gen_random_uuid() primary key,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  text text not null,
+  sender text not null,
+  user_id uuid references auth.users not null
+);
+
+-- 5. Função RPC para incrementar contador de vendas
+create or replace function increment_sales(row_id uuid)
+returns void as $$
+begin
+  update public.products
+  set "salesCount" = "salesCount" + 1
+  where id = row_id;
+end;
+$$ language plpgsql;
+
+-- 6. Habilitar Segurança (RLS)
+alter table public.products enable row level security;
+alter table public.payment_links enable row level security;
+alter table public.sales enable row level security;
+alter table public.support_messages enable row level security;
+
+-- 7. Criar Políticas de Acesso
+create policy "Users can manage own products" on public.products for all using (auth.uid() = user_id);
+create policy "Public can view approved products" on public.products for select using (true);
+
+create policy "Users can manage own links" on public.payment_links for all using (auth.uid() = user_id);
+
+create policy "Sellers can view own sales" on public.sales for select using (auth.uid() = user_id);
+create policy "Public can create sales" on public.sales for insert with check (true);
+
+create policy "Users can manage own messages" on public.support_messages for all using (auth.uid() = user_id);`;
+
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-20">
       <div>
@@ -143,27 +225,30 @@ const Settings: React.FC<SettingsProps> = ({ user, theme, toggleTheme, onUpdateU
 
           <form onSubmit={handleProfileUpdate} className="space-y-4">
              <div className="flex items-center gap-4 mb-6">
-                <div className="relative w-24 h-24 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center text-2xl font-bold text-gray-400 overflow-hidden shrink-0 group border-2 border-transparent hover:border-indigo-500 transition-colors">
+                
+                {/* Mobile Safe Avatar Upload */}
+                <label className="relative w-24 h-24 bg-gray-100 dark:bg-gray-700 rounded-full flex items-center justify-center text-2xl font-bold text-gray-400 overflow-hidden shrink-0 group border-2 border-transparent hover:border-indigo-500 transition-colors cursor-pointer">
                     {avatarUrl ? (
                         <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
                     ) : (
                         name.charAt(0).toUpperCase()
                     )}
                     
-                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center transition-opacity opacity-0 group-hover:opacity-100 pointer-events-none">
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center transition-opacity opacity-0 group-hover:opacity-100">
                         <Camera className="text-white" size={24} />
                     </div>
+                    {/* Native Input inside Label */}
                     <input 
                         type="file" 
-                        accept="image/*" 
+                        accept="image/png, image/jpeg, image/jpg" 
                         onChange={handleFileChange}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50"
-                        title="Alterar foto"
+                        className="sr-only"
                     />
-                </div>
+                </label>
+
                 <div className="flex-1">
                      <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">Sua foto</p>
-                     <p className="text-xs text-gray-500 dark:text-gray-400">Toque na foto para editar e salvar.</p>
+                     <p className="text-xs text-gray-500 dark:text-gray-400">Toque na foto para editar.</p>
                 </div>
              </div>
 
@@ -247,37 +332,63 @@ const Settings: React.FC<SettingsProps> = ({ user, theme, toggleTheme, onUpdateU
           </form>
         </div>
 
-        {/* App Settings */}
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6 h-fit">
-           <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-6">Aparência</h2>
-           
-           <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-xl">
-               <div className="flex items-center gap-3">
-                   <div className={`p-2 rounded-lg ${theme === 'dark' ? 'bg-indigo-500 text-white' : 'bg-orange-100 text-orange-500'}`}>
-                       {theme === 'dark' ? <Moon size={20} /> : <Sun size={20} />}
-                   </div>
-                   <div>
-                       <h3 className="font-medium text-gray-900 dark:text-white">Tema do Sistema</h3>
-                       <p className="text-sm text-gray-500 dark:text-gray-400">{theme === 'dark' ? 'Modo Escuro' : 'Modo Claro'}</p>
-                   </div>
-               </div>
-               <button 
-                onClick={toggleTheme}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${theme === 'dark' ? 'bg-indigo-600' : 'bg-gray-200'}`}
-               >
-                   <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${theme === 'dark' ? 'translate-x-6' : 'translate-x-1'}`} />
-               </button>
-           </div>
+        {/* Right Column */}
+        <div className="space-y-8 h-fit">
+            {/* App Settings */}
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
+                <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-6">Aparência</h2>
+                <div className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-xl">
+                    <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-lg ${theme === 'dark' ? 'bg-indigo-500 text-white' : 'bg-orange-100 text-orange-500'}`}>
+                            {theme === 'dark' ? <Moon size={20} /> : <Sun size={20} />}
+                        </div>
+                        <div>
+                            <h3 className="font-medium text-gray-900 dark:text-white">Tema do Sistema</h3>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">{theme === 'dark' ? 'Modo Escuro' : 'Modo Claro'}</p>
+                        </div>
+                    </div>
+                    <button 
+                        onClick={toggleTheme}
+                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 ${theme === 'dark' ? 'bg-indigo-600' : 'bg-gray-200'}`}
+                    >
+                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${theme === 'dark' ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
+                </div>
+            </div>
+
+            {/* Database Settings */}
+            <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 p-6">
+                <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+                    <Database size={20} /> Instalação do Banco de Dados
+                </h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                    Se você está vendo erros de "Tabela não encontrada", copie este script SQL e execute no "SQL Editor" do seu painel Supabase.
+                </p>
+                <div className="relative">
+                    <pre className="bg-gray-900 text-gray-300 p-4 rounded-lg text-xs overflow-x-auto whitespace-pre-wrap font-mono h-64 overflow-y-auto border border-gray-700">
+                        {sqlScript}
+                    </pre>
+                    <button 
+                        onClick={() => {
+                            navigator.clipboard.writeText(sqlScript);
+                            alert("Script SQL copiado para a área de transferência!");
+                        }}
+                        className="absolute top-4 right-4 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded-md text-xs font-bold flex items-center gap-1 shadow-lg"
+                    >
+                        <Copy size={12} /> Copiar SQL
+                    </button>
+                </div>
+            </div>
         </div>
       </div>
 
        {/* Crop Modal */}
       {showCropModal && (
-          <div className="fixed inset-0 bg-black/80 z-[60] flex items-center justify-center p-4">
-              <div className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-md overflow-hidden">
+          <div className="fixed inset-0 bg-black/90 z-[9999] flex items-center justify-center p-4">
+              <div className="bg-white dark:bg-gray-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
                   <div className="p-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
                       <h3 className="font-bold text-gray-900 dark:text-white">Ajustar Foto</h3>
-                      <button onClick={() => { setShowCropModal(false); setTempImage(null); }} className="text-gray-400"><X size={24} /></button>
+                      <button onClick={() => { setShowCropModal(false); setTempImage(null); }} className="p-2 bg-gray-200 dark:bg-gray-700 rounded-full"><X size={20} /></button>
                   </div>
                   <div className="p-6 flex flex-col items-center">
                       <div className="w-64 h-64 bg-gray-100 dark:bg-gray-900 rounded-full overflow-hidden relative mb-4 border-2 border-dashed border-indigo-300">
