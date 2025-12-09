@@ -102,6 +102,7 @@ const CATEGORIES: { value: ProductCategory; label: string; subcategories: string
 
 const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
   const [activeTab, setActiveTab] = useState<Tab>('overview');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const productImageInputRef = useRef<HTMLInputElement>(null);
 
   // User Profile
@@ -340,9 +341,22 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans text-slate-900">
       
-      {/* Sidebar */}
-      <aside className="hidden lg:flex w-64 bg-white border-r border-slate-200 flex-col fixed h-full z-10">
-        <div className="p-6 border-b border-slate-100">
+      {/* Mobile Header (Visible only on small screens) */}
+      <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 z-20">
+         <div className="flex items-center gap-2">
+            <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center text-white">
+              <Wallet size={18} />
+            </div>
+            <span className="text-xl font-bold text-slate-900">Pay<span className="text-brand-500">Easy</span></span>
+         </div>
+         <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="p-2 text-slate-600">
+             {mobileMenuOpen ? <X size={24}/> : <Menu size={24}/>}
+         </button>
+      </div>
+
+      {/* Sidebar - Desktop & Mobile Overlay */}
+      <aside className={`fixed lg:static inset-y-0 left-0 w-64 bg-white border-r border-slate-200 flex flex-col z-30 transition-transform duration-300 lg:transform-none ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="p-6 border-b border-slate-100 hidden lg:block">
           <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center text-white">
               <Wallet size={18} />
@@ -350,18 +364,24 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
             <span className="text-xl font-bold text-slate-900">Pay<span className="text-brand-500">Easy</span></span>
           </div>
         </div>
+        
+        {/* Mobile Header inside sidebar to close it */}
+        <div className="lg:hidden p-4 border-b border-slate-100 flex justify-between items-center">
+             <span className="font-bold text-slate-500">Menu</span>
+             <button onClick={() => setMobileMenuOpen(false)}><X size={20}/></button>
+        </div>
 
         <nav className="flex-1 p-4 space-y-2">
-          <button onClick={() => setActiveTab('overview')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === 'overview' ? 'bg-brand-50 text-brand-600' : 'text-slate-600 hover:bg-slate-50'}`}>
+          <button onClick={() => { setActiveTab('overview'); setMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === 'overview' ? 'bg-brand-50 text-brand-600' : 'text-slate-600 hover:bg-slate-50'}`}>
             <LayoutDashboard size={20} /> Visão Geral
           </button>
-          <button onClick={() => setActiveTab('products')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === 'products' ? 'bg-brand-50 text-brand-600' : 'text-slate-600 hover:bg-slate-50'}`}>
+          <button onClick={() => { setActiveTab('products'); setMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === 'products' ? 'bg-brand-50 text-brand-600' : 'text-slate-600 hover:bg-slate-50'}`}>
             <ShoppingBag size={20} /> Produtos
           </button>
-          <button onClick={() => setActiveTab('links')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === 'links' ? 'bg-brand-50 text-brand-600' : 'text-slate-600 hover:bg-slate-50'}`}>
+          <button onClick={() => { setActiveTab('links'); setMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === 'links' ? 'bg-brand-50 text-brand-600' : 'text-slate-600 hover:bg-slate-50'}`}>
             <LinkIcon size={20} /> Links de Pagamento
           </button>
-          <button onClick={() => setActiveTab('settings')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === 'settings' ? 'bg-brand-50 text-brand-600' : 'text-slate-600 hover:bg-slate-50'}`}>
+          <button onClick={() => { setActiveTab('settings'); setMobileMenuOpen(false); }} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all font-medium ${activeTab === 'settings' ? 'bg-brand-50 text-brand-600' : 'text-slate-600 hover:bg-slate-50'}`}>
             <Settings size={20} /> Configurações
           </button>
         </nav>
@@ -372,9 +392,14 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
             </button>
         </div>
       </aside>
+      
+      {/* Overlay Backdrop for Mobile */}
+      {mobileMenuOpen && (
+          <div className="fixed inset-0 bg-black/20 z-20 lg:hidden" onClick={() => setMobileMenuOpen(false)}></div>
+      )}
 
       {/* Main Content */}
-      <main className="flex-1 lg:ml-64 p-4 lg:p-8 mt-16 lg:mt-0 overflow-y-auto">
+      <main className="flex-1 p-4 lg:p-8 mt-16 lg:mt-0 overflow-y-auto">
         
         {/* OVERVIEW TAB */}
         {activeTab === 'overview' && (
