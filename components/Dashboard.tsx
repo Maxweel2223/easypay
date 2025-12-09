@@ -19,7 +19,8 @@ import {
   Save,
   Loader2,
   Upload,
-  AlertTriangle
+  AlertTriangle,
+  Monitor
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../supabaseClient';
@@ -89,6 +90,10 @@ const TRANSLATIONS = {
     email_inactive_subject: 'Notificações de Marketing Desativadas',
     email_inactive_body: 'Você desativou as notificações de Marketing.',
     sms_active_msg: 'PayEasy: As notificações via SMS foram Ativadas com sucesso!',
+    device_info: 'Informações do Dispositivo',
+    location: 'Localização',
+    ip_address: 'Endereço IP',
+    logout_device: 'Terminar Sessão',
   },
   'en-US': {
     overview: 'Overview',
@@ -145,6 +150,10 @@ const TRANSLATIONS = {
     email_inactive_subject: 'Marketing Notifications Disabled',
     email_inactive_body: 'You have disabled Marketing notifications.',
     sms_active_msg: 'PayEasy: SMS notifications have been successfully Enabled!',
+    device_info: 'Device Information',
+    location: 'Location',
+    ip_address: 'IP Address',
+    logout_device: 'Sign Out',
   },
   'es': {
     overview: 'Visión General',
@@ -201,6 +210,10 @@ const TRANSLATIONS = {
     email_inactive_subject: 'Notificaciones de Marketing Desactivadas',
     email_inactive_body: 'Has desactivado las notificaciones de Marketing.',
     sms_active_msg: 'PayEasy: ¡Las notificaciones por SMS se han activado correctamente!',
+    device_info: 'Información del Dispositivo',
+    location: 'Ubicación',
+    ip_address: 'Dirección IP',
+    logout_device: 'Cerrar Sesión',
   }
 };
 
@@ -227,6 +240,15 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
     sms: false
   });
 
+  // Device Info State
+  const [deviceInfo, setDeviceInfo] = useState({
+    browser: '',
+    os: '',
+    ip: '',
+    city: '',
+    country: ''
+  });
+
   // Previous Notifications State to compare changes
   const prevNotificationsRef = useRef(notifications);
 
@@ -250,36 +272,77 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
     return TRANSLATIONS[language][key] || key;
   };
 
+  // Detect Device Info on Mount
+  useEffect(() => {
+    const getDeviceDetails = async () => {
+      // 1. Browser & OS Detection (Simple Regex)
+      const ua = navigator.userAgent;
+      let browser = "Desconhecido";
+      if (ua.indexOf("Chrome") > -1) browser = "Google Chrome";
+      else if (ua.indexOf("Safari") > -1) browser = "Safari";
+      else if (ua.indexOf("Firefox") > -1) browser = "Mozilla Firefox";
+      else if (ua.indexOf("Edge") > -1) browser = "Microsoft Edge";
+
+      let os = "Desconhecido";
+      if (ua.indexOf("Win") > -1) os = "Windows";
+      else if (ua.indexOf("Mac") > -1) os = "MacOS";
+      else if (ua.indexOf("Linux") > -1) os = "Linux";
+      else if (ua.indexOf("Android") > -1) os = "Android";
+      else if (ua.indexOf("iPhone") > -1 || ua.indexOf("iPad") > -1) os = "iOS";
+
+      // 2. IP & Location (Using free API)
+      try {
+        const res = await fetch('https://ipapi.co/json/');
+        const data = await res.json();
+        setDeviceInfo({
+          browser,
+          os,
+          ip: data.ip || 'N/A',
+          city: data.city || '',
+          country: data.country_name || ''
+        });
+      } catch (e) {
+        setDeviceInfo(prev => ({ ...prev, browser, os, ip: 'Detectando...', city: '', country: '' }));
+      }
+    };
+
+    getDeviceDetails();
+  }, []);
+
   // --- API INTEGRATIONS ---
 
   const sendEmailNotification = async (isActive: boolean, userEmail: string) => {
     const subject = isActive ? t('email_active_subject') : t('email_inactive_subject');
-    const body = isActive ? t('email_active_body') : t('email_inactive_body');
+    const body = `<p>${isActive ? t('email_active_body') : t('email_inactive_body')}</p>`;
     
-    // Using Resend via Fetch
-    // NOTE: Direct calls may be blocked by browser CORS in some environments.
+    // SOLUÇÃO CORS: Usando um Proxy CORS público (corsproxy.io) para contornar o bloqueio da Resend
+    // A Resend não permite chamadas diretas do browser. O proxy faz a ponte.
+    
+    const targetUrl = 'https://api.resend.com/emails';
+    const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(targetUrl);
+
     try {
-      console.log(`Sending email to ${userEmail} (Active: ${isActive})`);
-      const response = await fetch('https://api.resend.com/emails', {
+      console.log(`Sending Email via Resend Proxy to ${userEmail}`);
+      
+      const response = await fetch(proxyUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': 'Bearer re_Yb7BKpid_EdiTN1pb6J8w8y3YyTPUDUvz'
         },
         body: JSON.stringify({
-          from: 'onboarding@resend.dev', // Default testing sender
+          from: 'onboarding@resend.dev',
           to: userEmail,
           subject: subject,
-          html: `<p>${body}</p>`
+          html: body
         })
       });
-      
-      if (!response.ok) {
-        const errText = await response.text();
-        console.warn('Resend API response:', errText);
+
+      if (response.ok) {
+        console.log('Resend Email Sent Successfully');
       } else {
-        const data = await response.json();
-        console.log('Resend Email Sent Successfully:', data);
+        const err = await response.text();
+        console.warn('Resend API Error:', err);
       }
     } catch (e) {
       console.error('Failed to send email:', e);
@@ -287,35 +350,24 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
   };
 
   const sendSMSNotification = async (userPhone: string) => {
-    if (!userPhone) {
-      console.warn("No phone number to send SMS");
-      return;
-    }
+    if (!userPhone) return;
 
-    // Cleaning the number logic
-    // Removes non-digits
     let cleanNumber = userPhone.replace(/\D/g, '');
-    
-    // The API expects '258' + number. 
-    // We remove 258 if user typed it to avoid duplication in the variable, then add it in the string.
     if (cleanNumber.startsWith('258') && cleanNumber.length > 9) {
       cleanNumber = cleanNumber.substring(3);
     }
     
     const message = t('sms_active_msg');
-    
-    // Example from user used as base:
-    // https://app.yezosms.com/api?username=colddimas1@gmail.com&password=...&to=258${number}...
-    
     const url = `https://app.yezosms.com/api?username=colddimas1@gmail.com&password=f87766ab5b8ff18287a2b66747193ac9fd53ad3f&message=${encodeURIComponent(message)}&to=258${cleanNumber}&from=INFOMSG&messageid=100023`;
     
     try {
-      console.log(`Sending SMS to 258${cleanNumber}`);
-      const response = await fetch(url);
-      const data = await response.text();
-      console.log(`SMS LEAD ALERT SENT: ${data} 💬`);
+      // SOLUÇÃO CORS: Usando mode: 'no-cors'
+      // O navegador vai enviar a requisição (fire and forget), mas a resposta virá "opaca".
+      // Não tente ler response.text() ou response.json(), pois isso causa o TypeError no modo no-cors.
+      await fetch(url, { mode: 'no-cors' });
+      console.log(`SMS Request Triggered (Opaque Response)`);
     } catch (error: any) {
-      console.warn('SMS FAILED:', error.message);
+      console.warn('SMS Network Error:', error.message);
     }
   };
 
@@ -332,31 +384,39 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
       }
 
       setIsSaving(true);
-      const fileExt = file.name.split('.').pop();
-      // Add timestamp to avoid caching issues on browser
-      const fileName = `${session.user.id}-${Date.now()}.${fileExt}`;
-      const filePath = `${fileName}`;
+      
+      // Sanitizando o nome do arquivo para evitar Erro 400 (Bad Request)
+      // Remove caracteres especiais, espaços, etc.
+      const cleanFileName = file.name.replace(/[^a-zA-Z0-9.]/g, '');
+      const fileExt = cleanFileName.split('.').pop();
+      
+      // Nome único e seguro
+      const fileName = `${session.user.id}/avatar_${Date.now()}.${fileExt}`;
 
       // Upload to Supabase Storage
       const { error: uploadError } = await supabase.storage
         .from('avatars')
-        .upload(filePath, file, {
+        .upload(fileName, file, {
           cacheControl: '3600',
           upsert: true
         });
 
       if (uploadError) {
+        console.error("Upload Error:", uploadError);
+        if (uploadError.message.includes("row-level security")) {
+            throw new Error("Erro de Permissão: O Supabase bloqueou o upload. Vá em 'Storage' > 'Policies' e permita INSERT/UPDATE.");
+        }
         throw uploadError;
       }
 
       // Get Public URL
       const { data: { publicUrl } } = supabase.storage
         .from('avatars')
-        .getPublicUrl(filePath);
+        .getPublicUrl(fileName);
 
       setProfile(prev => ({ ...prev, photoUrl: publicUrl }));
       
-      // Update User Metadata immediately with new photo
+      // Update User Metadata immediately
       const { error: updateError } = await supabase.auth.updateUser({
         data: { avatar_url: publicUrl }
       });
@@ -367,7 +427,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
       setTimeout(() => setSaveMessage(''), 3000);
 
     } catch (error: any) {
-      alert('Erro ao fazer upload da imagem: ' + error.message);
+      alert('Erro ao fazer upload: ' + error.message);
     } finally {
       setIsSaving(false);
     }
@@ -390,7 +450,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
     setSaveMessage('');
     
     try {
-      // 1. Update Supabase Auth Data
       const { error } = await supabase.auth.updateUser({
         email: profile.email,
         data: {
@@ -403,20 +462,14 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
 
       if (error) throw error;
 
-      // 2. Check Notification Changes for Email Marketing
-      // Logic: If status changed from saved state
       if (notifications.email !== prevNotificationsRef.current.email) {
-        // Pass the NEW status
         await sendEmailNotification(notifications.email, profile.email);
       }
 
-      // 3. Check Notification Changes for SMS
-      // Logic: If status changed AND is now TRUE
       if (notifications.sms && !prevNotificationsRef.current.sms) {
         await sendSMSNotification(profile.phone);
       }
 
-      // Update ref to current state so future changes are detected correctly
       prevNotificationsRef.current = notifications;
 
       setSaveMessage(t('saved_success'));
@@ -435,11 +488,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
     }
 
     try {
-      // Note: Client-side deletion often requires Admin API or RPC function. 
-      // We will try the standard updateUser call to maybe disable it, or just sign out for now
-      // as Supabase doesn't allow self-deletion from client by default without config.
-      // Ideally: await supabase.rpc('delete_user');
-      
       alert("Solicitação enviada. Sua conta será desativada em breve.");
       await supabase.auth.signOut();
       onLogout();
@@ -461,24 +509,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
     setProducts([product, ...products]);
     setNewProduct({ name: '', price: '', description: '' });
     setShowProductModal(false);
-  };
-
-  // Helper to get real device info
-  const getDeviceInfo = () => {
-    const ua = navigator.userAgent;
-    let browser = "Navegador Desconhecido";
-    if (ua.indexOf("Chrome") > -1) browser = "Google Chrome";
-    else if (ua.indexOf("Safari") > -1) browser = "Safari";
-    else if (ua.indexOf("Firefox") > -1) browser = "Mozilla Firefox";
-
-    let os = "OS Desconhecido";
-    if (ua.indexOf("Win") > -1) os = "Windows";
-    else if (ua.indexOf("Mac") > -1) os = "MacOS";
-    else if (ua.indexOf("Linux") > -1) os = "Linux";
-    else if (ua.indexOf("Android") > -1) os = "Android";
-    else if (ua.indexOf("iPhone") > -1) os = "iOS";
-
-    return `${browser} no ${os}`;
   };
 
   const NavItem = ({ tab, icon: Icon, label }: { tab: Tab, icon: any, label: string }) => (
@@ -874,39 +904,46 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
                    </div>
                 </div>
 
-                {/* 3. Login History & Devices */}
+                {/* 3. Real Time Connected Device */}
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
                     <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                     <Smartphone size={20} className="text-brand-600"/> {t('connected_devices')}
+                     <Monitor size={20} className="text-brand-600"/> {t('connected_devices')}
                    </h3>
                    <div className="space-y-4">
-                      {/* Current Device - Real Data */}
-                      <div className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-100">
-                        <div className="flex items-center gap-3">
-                           <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-green-600">
-                             <Globe size={16} />
+                      {/* Current Device - Real Time */}
+                      <div className="flex flex-col sm:flex-row items-center justify-between p-4 bg-brand-50/50 rounded-xl border border-brand-100 gap-4">
+                        <div className="flex items-center gap-4 w-full">
+                           <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-green-600 shrink-0">
+                             <Globe size={20} />
                            </div>
-                           <div>
-                             <div className="text-sm font-bold text-slate-900">{getDeviceInfo()}</div>
-                             <div className="text-xs text-slate-500">Maputo, MZ • Agora</div>
-                           </div>
-                        </div>
-                        <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded">{t('current')}</span>
-                      </div>
-                      
-                      {/* Simulating another device to allow disconnect demo - user cannot 'disconnect' current */}
-                      <div className="flex items-center justify-between p-3 bg-white rounded-lg border border-slate-100 opacity-70">
-                        <div className="flex items-center gap-3">
-                           <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-500">
-                             <Smartphone size={16} />
-                           </div>
-                           <div>
-                             <div className="text-sm font-bold text-slate-900">Chrome Mobile (Android)</div>
-                             <div className="text-xs text-slate-500">Beira, MZ • 2d atrás</div>
+                           <div className="min-w-0">
+                             <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                               {deviceInfo.browser} no {deviceInfo.os}
+                               <span className="text-[10px] font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full uppercase tracking-wider">{t('current')}</span>
+                             </div>
+                             <div className="text-xs text-slate-500 mt-1 flex flex-wrap gap-x-2">
+                               {deviceInfo.city && deviceInfo.country ? (
+                                 <span>{deviceInfo.city}, {deviceInfo.country}</span>
+                               ) : (
+                                 <span>{t('location')}: Detectando...</span>
+                               )}
+                               <span>•</span>
+                               <span>IP: {deviceInfo.ip}</span>
+                             </div>
                            </div>
                         </div>
-                        <button className="text-xs text-red-500 hover:underline">Sair</button>
+                        
+                        <button 
+                          onClick={onLogout}
+                          className="text-xs font-bold text-red-500 hover:text-red-700 hover:bg-red-50 px-3 py-2 rounded-lg transition-colors shrink-0"
+                        >
+                          {t('logout_device')}
+                        </button>
                       </div>
+
+                      <p className="text-xs text-slate-400 text-center">
+                        Esta é a sessão ativa neste momento. Para segurança, você pode encerrar esta sessão acima.
+                      </p>
                    </div>
                 </div>
 
