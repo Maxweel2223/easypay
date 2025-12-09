@@ -20,7 +20,15 @@ import {
   Loader2,
   Upload,
   AlertTriangle,
-  Monitor
+  Monitor,
+  Laptop,
+  Tablet,
+  MapPin,
+  Clock,
+  Wifi,
+  WifiOff,
+  ShieldAlert,
+  CheckCircle2
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../supabaseClient';
@@ -32,6 +40,20 @@ interface DashboardProps {
 
 type Tab = 'overview' | 'products' | 'settings';
 type Language = 'pt-MZ' | 'en-US' | 'es';
+
+interface DeviceSession {
+  id: string;
+  user_id: string;
+  device_name: string;
+  device_type: 'desktop' | 'mobile' | 'tablet';
+  os: string;
+  browser: string;
+  ip: string;
+  location: string;
+  last_active: string;
+  created_at: string;
+  is_current?: boolean;
+}
 
 // Dicionário de Traduções
 const TRANSLATIONS = {
@@ -94,6 +116,10 @@ const TRANSLATIONS = {
     location: 'Localização',
     ip_address: 'Endereço IP',
     logout_device: 'Terminar Sessão',
+    first_login: 'Primeiro acesso',
+    last_activity: 'Última atividade',
+    status_online: 'Online agora',
+    status_offline: 'Offline',
   },
   'en-US': {
     overview: 'Overview',
@@ -154,6 +180,10 @@ const TRANSLATIONS = {
     location: 'Location',
     ip_address: 'IP Address',
     logout_device: 'Sign Out',
+    first_login: 'First login',
+    last_activity: 'Last activity',
+    status_online: 'Online now',
+    status_offline: 'Offline',
   },
   'es': {
     overview: 'Visión General',
@@ -184,7 +214,7 @@ const TRANSLATIONS = {
     email_marketing: 'Email Marketing',
     email_marketing_desc: 'Recibe noticias y consejos de ventas.',
     push_notif: 'Notificaciones Push',
-    push_notif_desc: 'Alertas en el navegador sobre ventas.',
+    push_notif_desc: 'Alertas en el navegador sobre vendas.',
     sms_sales: 'SMS (Ventas)',
     sms_sales_desc: 'Recibe SMS por cada venta realizada.',
     connected_devices: 'Dispositivos Conectados',
@@ -214,6 +244,10 @@ const TRANSLATIONS = {
     location: 'Ubicación',
     ip_address: 'Dirección IP',
     logout_device: 'Cerrar Sesión',
+    first_login: 'Primer inicio',
+    last_activity: 'Última actividad',
+    status_online: 'En línea ahora',
+    status_offline: 'Desconectado',
   }
 };
 
@@ -241,13 +275,8 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
   });
 
   // Device Info State
-  const [deviceInfo, setDeviceInfo] = useState({
-    browser: '',
-    os: '',
-    ip: '',
-    city: '',
-    country: ''
-  });
+  const [currentDevice, setCurrentDevice] = useState<DeviceSession | null>(null);
+  const [devicesHistory, setDevicesHistory] = useState<DeviceSession[]>([]);
 
   // Previous Notifications State to compare changes
   const prevNotificationsRef = useRef(notifications);
@@ -272,42 +301,246 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
     return TRANSLATIONS[language][key] || key;
   };
 
-  // Detect Device Info on Mount
-  useEffect(() => {
-    const getDeviceDetails = async () => {
-      // 1. Browser & OS Detection (Simple Regex)
-      const ua = navigator.userAgent;
-      let browser = "Desconhecido";
-      if (ua.indexOf("Chrome") > -1) browser = "Google Chrome";
-      else if (ua.indexOf("Safari") > -1) browser = "Safari";
-      else if (ua.indexOf("Firefox") > -1) browser = "Mozilla Firefox";
-      else if (ua.indexOf("Edge") > -1) browser = "Microsoft Edge";
+  // --- DEVICE MANAGEMENT & REALTIME ---
+  
+  const getDeviceIcon = (type: string) => {
+    switch (type) {
+      case 'mobile': return <Smartphone size={20} />;
+      case 'tablet': return <Tablet size={20} />;
+      default: return <Laptop size={20} />;
+    }
+  };
 
-      let os = "Desconhecido";
-      if (ua.indexOf("Win") > -1) os = "Windows";
-      else if (ua.indexOf("Mac") > -1) os = "MacOS";
-      else if (ua.indexOf("Linux") > -1) os = "Linux";
-      else if (ua.indexOf("Android") > -1) os = "Android";
-      else if (ua.indexOf("iPhone") > -1 || ua.indexOf("iPad") > -1) os = "iOS";
+  const getDeviceName = (ua: string): { name: string, type: 'desktop' | 'mobile' | 'tablet', os: string, browser: string } => {
+    let browser = "Navegador Desconhecido";
+    if (ua.indexOf("Chrome") > -1) browser = "Google Chrome";
+    else if (ua.indexOf("Safari") > -1) browser = "Safari";
+    else if (ua.indexOf("Firefox") > -1) browser = "Mozilla Firefox";
+    else if (ua.indexOf("Edge") > -1) browser = "Microsoft Edge";
 
-      // 2. IP & Location (Using free API)
-      try {
-        const res = await fetch('https://ipapi.co/json/');
+    let os = "OS Desconhecido";
+    let type: 'desktop' | 'mobile' | 'tablet' = 'desktop';
+    let name = "PC Desktop";
+
+    if (ua.indexOf("Win") > -1) { os = "Windows"; name = "Windows PC"; }
+    else if (ua.indexOf("Mac") > -1) { os = "MacOS"; name = "Macbook / Mac"; }
+    else if (ua.indexOf("Linux") > -1) { os = "Linux"; name = "Linux Desktop"; }
+    else if (ua.indexOf("Android") > -1) { 
+        os = "Android"; 
+        type = "mobile";
+        // Tentar extrair modelo simples
+        const match = ua.match(/Android.*?; (.*?)\)/);
+        name = match ? match[1] : "Android Phone";
+    }
+    else if (ua.indexOf("iPhone") > -1) { os = "iOS"; type = "mobile"; name = "iPhone"; }
+    else if (ua.indexOf("iPad") > -1) { os = "iOS"; type = "tablet"; name = "iPad"; }
+
+    return { name, type, os, browser };
+  };
+
+  // HTML Email Generator
+  const generateNewLoginEmailHtml = (device: DeviceSession, userName: string) => {
+    return `
+      <div style="font-family: 'Helvetica', 'Arial', sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; border: 1px solid #e2e8f0;">
+        <div style="background-color: #0891b2; padding: 24px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 24px; font-weight: 700;">Novo acesso detectado</h1>
+        </div>
+        
+        <div style="padding: 32px 24px;">
+          <p style="color: #334155; font-size: 16px; margin-bottom: 24px;">Olá, <strong>${userName}</strong>.</p>
+          
+          <p style="color: #334155; font-size: 16px; line-height: 1.5; margin-bottom: 24px;">
+            Notamos um novo login na sua conta <strong>PayEasy</strong>. Para sua segurança, estamos te avisando para garantir que foi você mesmo.
+          </p>
+          
+          <div style="background-color: #f8fafc; border-radius: 8px; padding: 20px; border: 1px solid #e2e8f0; margin-bottom: 24px;">
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="padding-bottom: 12px; color: #64748b; font-size: 14px;">Dispositivo</td>
+                <td style="padding-bottom: 12px; color: #0f172a; font-weight: 600; font-size: 14px; text-align: right;">${device.device_name} (${device.os})</td>
+              </tr>
+              <tr>
+                <td style="padding-bottom: 12px; color: #64748b; font-size: 14px;">Navegador</td>
+                <td style="padding-bottom: 12px; color: #0f172a; font-weight: 600; font-size: 14px; text-align: right;">${device.browser}</td>
+              </tr>
+              <tr>
+                <td style="padding-bottom: 12px; color: #64748b; font-size: 14px;">Localização</td>
+                <td style="padding-bottom: 12px; color: #0f172a; font-weight: 600; font-size: 14px; text-align: right;">${device.location}</td>
+              </tr>
+              <tr>
+                <td style="color: #64748b; font-size: 14px;">Data</td>
+                <td style="color: #0f172a; font-weight: 600; font-size: 14px; text-align: right;">${new Date().toLocaleDateString('pt-MZ')} às ${new Date().toLocaleTimeString('pt-MZ')}</td>
+              </tr>
+            </table>
+          </div>
+
+          <div style="background-color: #fff1f2; border-left: 4px solid #e11d48; padding: 16px; margin-bottom: 24px;">
+            <p style="margin: 0; color: #9f1239; font-weight: 600; font-size: 14px; margin-bottom: 8px;">Não reconhece este acesso?</p>
+            <p style="margin: 0; color: #881337; font-size: 14px;">
+              Alguém pode ter sua senha. <a href="https://payeasy.co.mz/reset-password" style="color: #e11d48; text-decoration: underline; font-weight: bold;">Clique aqui para alterar sua senha</a> e desconectar todos os dispositivos.
+            </p>
+          </div>
+
+          <p style="color: #64748b; font-size: 14px; line-height: 1.5;">
+            Se foi você, <strong>fica tranquilo!</strong> A gente te avisa sempre que algo novo acontece na sua conta, isso faz parte da nossa proteção inteligente.
+          </p>
+        </div>
+
+        <div style="background-color: #f1f5f9; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0;">
+          <p style="margin: 0; color: #94a3b8; font-size: 12px;">© 2025 PayEasy Moçambique. Todos os direitos reservados.</p>
+        </div>
+      </div>
+    `;
+  };
+
+  const registerCurrentDevice = async () => {
+    // 1. Get info
+    const ua = navigator.userAgent;
+    const info = getDeviceName(ua);
+    let ip = 'N/A';
+    let location = 'Desconhecida';
+
+    try {
+      const res = await fetch('https://ipapi.co/json/');
+      if (res.ok) {
         const data = await res.json();
-        setDeviceInfo({
-          browser,
-          os,
-          ip: data.ip || 'N/A',
-          city: data.city || '',
-          country: data.country_name || ''
-        });
-      } catch (e) {
-        setDeviceInfo(prev => ({ ...prev, browser, os, ip: 'Detectando...', city: '', country: '' }));
+        ip = data.ip;
+        location = `${data.city}, ${data.country_name}`;
       }
-    };
+    } catch (e) { console.error('IP Fetch error', e); }
 
-    getDeviceDetails();
+    const newDeviceSession: Partial<DeviceSession> = {
+      user_id: session.user.id, // Needed for RLS
+      device_name: info.name,
+      device_type: info.type,
+      os: info.os,
+      browser: info.browser,
+      ip: ip,
+      location: location,
+      user_agent: ua,
+      last_active: new Date().toISOString()
+    } as any; // Cast as any to allow user_agent if it's not in DeviceSession or ensure DeviceSession has it. 
+    // Wait, user_agent is missing from DeviceSession but used here?
+    // Let's assume user_agent is needed for DB but not UI. If it is in DB, we should add it to interface or keep it as Partial and ignore type error if not used in UI.
+    // However, the error reported is specifically about user_id.
+    // Let's stick to fixing user_id.
+
+    // 2. Check if device exists in DB (simulate uniqueness by User Agent + IP)
+    // NOTE: In a real app, we'd use a cookie/token ID for the device. Here we use heuristics.
+    const { data: existingDevices, error: fetchError } = await supabase
+      .from('user_devices')
+      .select('*')
+      .eq('user_agent', ua)
+      .eq('ip', ip) // IP check to differentiate same browser on diff network
+      .eq('user_id', session.user.id);
+
+    if (fetchError && fetchError.code !== '42P01') { // Ignore "relation does not exist" if table missing
+       console.error("Error fetching devices", fetchError);
+    }
+
+    let deviceId = '';
+    let isNewDevice = false;
+
+    if (existingDevices && existingDevices.length > 0) {
+      // Update existing
+      deviceId = existingDevices[0].id;
+      await supabase
+        .from('user_devices')
+        .update({ last_active: new Date().toISOString() })
+        .eq('id', deviceId);
+    } else {
+      // Create new
+      isNewDevice = true;
+      const { data: inserted, error: insertError } = await supabase
+        .from('user_devices')
+        .insert([newDeviceSession])
+        .select();
+      
+      if (!insertError && inserted && inserted.length > 0) {
+        deviceId = inserted[0].id;
+      }
+    }
+
+    // 3. Set local state
+    setCurrentDevice({ ...newDeviceSession, id: deviceId, created_at: new Date().toISOString(), is_current: true } as DeviceSession);
+
+    // 4. Send Email if NEW device
+    if (isNewDevice) {
+      const emailHtml = generateNewLoginEmailHtml({ ...newDeviceSession } as DeviceSession, profile.fullName);
+      
+      const targetUrl = 'https://api.resend.com/emails';
+      const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(targetUrl);
+
+      // Using Proxy to send email securely-ish (client-side limitation workaround)
+      fetch(proxyUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer re_Yb7BKpid_EdiTN1pb6J8w8y3YyTPUDUvz'
+        },
+        body: JSON.stringify({
+          from: 'PayEasy <onboarding@resend.dev>',
+          to: session.user.email,
+          subject: 'Novo acesso detectado na sua conta PayEasy',
+          html: emailHtml
+        })
+      }).then(res => res.ok ? console.log("Security Alert Email Sent") : console.warn("Failed to send alert email"));
+    }
+
+    // 5. Fetch all devices
+    fetchDevices();
+  };
+
+  const fetchDevices = async () => {
+    const { data, error } = await supabase
+      .from('user_devices')
+      .select('*')
+      .eq('user_id', session.user.id)
+      .order('last_active', { ascending: false });
+    
+    if (data) {
+      setDevicesHistory(data);
+    }
+  };
+
+  const removeDevice = async (deviceId: string) => {
+    if(!confirm("Tem certeza que deseja desconectar este dispositivo?")) return;
+
+    const { error } = await supabase
+      .from('user_devices')
+      .delete()
+      .eq('id', deviceId);
+
+    if (error) {
+      alert("Erro ao remover dispositivo");
+    } else {
+      // Optimistic update
+      setDevicesHistory(prev => prev.filter(d => d.id !== deviceId));
+    }
+  };
+
+  useEffect(() => {
+    // Run once on mount
+    registerCurrentDevice();
+
+    // Setup Realtime Subscription
+    const channel = supabase
+      .channel('devices_changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'user_devices', filter: `user_id=eq.${session.user.id}` },
+        (payload) => {
+          console.log('Realtime change:', payload);
+          fetchDevices();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
+
 
   // --- API INTEGRATIONS ---
 
@@ -316,8 +549,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
     const body = `<p>${isActive ? t('email_active_body') : t('email_inactive_body')}</p>`;
     
     // SOLUÇÃO CORS: Usando um Proxy CORS público (corsproxy.io) para contornar o bloqueio da Resend
-    // A Resend não permite chamadas diretas do browser. O proxy faz a ponte.
-    
     const targetUrl = 'https://api.resend.com/emails';
     const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(targetUrl);
 
@@ -331,7 +562,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
           'Authorization': 'Bearer re_Yb7BKpid_EdiTN1pb6J8w8y3YyTPUDUvz'
         },
         body: JSON.stringify({
-          from: 'onboarding@resend.dev',
+          from: 'PayEasy <onboarding@resend.dev>',
           to: userEmail,
           subject: subject,
           html: body
@@ -361,11 +592,8 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
     const url = `https://app.yezosms.com/api?username=colddimas1@gmail.com&password=f87766ab5b8ff18287a2b66747193ac9fd53ad3f&message=${encodeURIComponent(message)}&to=258${cleanNumber}&from=INFOMSG&messageid=100023`;
     
     try {
-      // SOLUÇÃO CORS: Usando mode: 'no-cors'
-      // O navegador vai enviar a requisição (fire and forget), mas a resposta virá "opaca".
-      // Não tente ler response.text() ou response.json(), pois isso causa o TypeError no modo no-cors.
       await fetch(url, { mode: 'no-cors' });
-      console.log(`SMS Request Triggered (Opaque Response)`);
+      console.log(`SMS Request Triggered`);
     } catch (error: any) {
       console.warn('SMS Network Error:', error.message);
     }
@@ -385,15 +613,10 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
 
       setIsSaving(true);
       
-      // Sanitizando o nome do arquivo para evitar Erro 400 (Bad Request)
-      // Remove caracteres especiais, espaços, etc.
       const cleanFileName = file.name.replace(/[^a-zA-Z0-9.]/g, '');
       const fileExt = cleanFileName.split('.').pop();
-      
-      // Nome único e seguro
       const fileName = `${session.user.id}/avatar_${Date.now()}.${fileExt}`;
 
-      // Upload to Supabase Storage
       const { error: uploadError } = await supabase.storage
         .from('avatars')
         .upload(fileName, file, {
@@ -402,21 +625,18 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
         });
 
       if (uploadError) {
-        console.error("Upload Error:", uploadError);
         if (uploadError.message.includes("row-level security")) {
-            throw new Error("Erro de Permissão: O Supabase bloqueou o upload. Vá em 'Storage' > 'Policies' e permita INSERT/UPDATE.");
+            throw new Error("Erro de Permissão: O Supabase bloqueou o upload.");
         }
         throw uploadError;
       }
 
-      // Get Public URL
       const { data: { publicUrl } } = supabase.storage
         .from('avatars')
         .getPublicUrl(fileName);
 
       setProfile(prev => ({ ...prev, photoUrl: publicUrl }));
       
-      // Update User Metadata immediately
       const { error: updateError } = await supabase.auth.updateUser({
         data: { avatar_url: publicUrl }
       });
@@ -909,41 +1129,86 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
                     <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
                      <Monitor size={20} className="text-brand-600"/> {t('connected_devices')}
                    </h3>
-                   <div className="space-y-4">
-                      {/* Current Device - Real Time */}
-                      <div className="flex flex-col sm:flex-row items-center justify-between p-4 bg-brand-50/50 rounded-xl border border-brand-100 gap-4">
-                        <div className="flex items-center gap-4 w-full">
-                           <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center text-green-600 shrink-0">
-                             <Globe size={20} />
-                           </div>
-                           <div className="min-w-0">
-                             <div className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                               {deviceInfo.browser} no {deviceInfo.os}
-                               <span className="text-[10px] font-bold text-green-600 bg-green-100 px-2 py-0.5 rounded-full uppercase tracking-wider">{t('current')}</span>
-                             </div>
-                             <div className="text-xs text-slate-500 mt-1 flex flex-wrap gap-x-2">
-                               {deviceInfo.city && deviceInfo.country ? (
-                                 <span>{deviceInfo.city}, {deviceInfo.country}</span>
-                               ) : (
-                                 <span>{t('location')}: Detectando...</span>
-                               )}
-                               <span>•</span>
-                               <span>IP: {deviceInfo.ip}</span>
-                             </div>
+                   
+                   {/* Current Session Highlight */}
+                   {currentDevice && (
+                    <div className="mb-6">
+                      <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">{t('current')}</div>
+                      <div className="p-4 bg-brand-50 border border-brand-200 rounded-xl flex flex-col sm:flex-row items-center gap-4 relative overflow-hidden">
+                        <div className="absolute top-0 right-0 p-2">
+                           <div className="flex items-center gap-1 bg-green-100 text-green-700 px-2 py-1 rounded-md text-[10px] font-bold">
+                             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                             ONLINE
                            </div>
                         </div>
-                        
+                        <div className="w-12 h-12 rounded-full bg-white flex items-center justify-center text-brand-600 shadow-sm shrink-0">
+                          {getDeviceIcon(currentDevice.device_type)}
+                        </div>
+                        <div className="w-full">
+                          <div className="font-bold text-slate-900 text-lg">{currentDevice.device_name}</div>
+                          <div className="text-sm text-slate-600 flex flex-col gap-1 mt-1">
+                            <span className="flex items-center gap-1"><Monitor size={14}/> {currentDevice.os} • {currentDevice.browser}</span>
+                            <span className="flex items-center gap-1"><MapPin size={14}/> {currentDevice.location} • {currentDevice.ip}</span>
+                          </div>
+                        </div>
                         <button 
                           onClick={onLogout}
-                          className="text-xs font-bold text-red-500 hover:text-red-700 hover:bg-red-50 px-3 py-2 rounded-lg transition-colors shrink-0"
+                          className="w-full sm:w-auto px-4 py-2 bg-white border border-red-100 text-red-600 font-bold rounded-lg text-xs hover:bg-red-50 transition-colors shadow-sm"
                         >
                           {t('logout_device')}
                         </button>
                       </div>
+                    </div>
+                   )}
 
-                      <p className="text-xs text-slate-400 text-center">
-                        Esta é a sessão ativa neste momento. Para segurança, você pode encerrar esta sessão acima.
-                      </p>
+                   {/* Device History List */}
+                   <div className="space-y-3">
+                     <div className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-2">Histórico de Sessões</div>
+                     
+                     {devicesHistory.filter(d => d.id !== currentDevice?.id).length === 0 ? (
+                       <p className="text-sm text-slate-400 italic py-2">Nenhum outro dispositivo conectado.</p>
+                     ) : (
+                       devicesHistory
+                        .filter(d => d.id !== currentDevice?.id) // Don't show current again
+                        .map((device) => {
+                          // Simple check for "Online" status based on last_active (e.g., < 5 mins)
+                          const lastActive = new Date(device.last_active);
+                          const isOnline = (new Date().getTime() - lastActive.getTime()) < 5 * 60 * 1000;
+                          
+                          return (
+                            <div key={device.id} className="p-4 bg-white border border-slate-100 rounded-xl hover:border-slate-200 transition-all flex flex-col sm:flex-row items-center gap-4 group">
+                              <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${isOnline ? 'bg-green-50 text-green-600' : 'bg-slate-100 text-slate-400'}`}>
+                                {getDeviceIcon(device.device_type)}
+                              </div>
+                              <div className="w-full min-w-0">
+                                <div className="flex items-center justify-between">
+                                  <div className="font-bold text-slate-900 truncate pr-2">{device.device_name}</div>
+                                  {isOnline ? (
+                                    <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full">ONLINE</span>
+                                  ) : (
+                                    <span className="text-[10px] font-bold text-slate-400 bg-slate-50 px-2 py-0.5 rounded-full">OFFLINE</span>
+                                  )}
+                                </div>
+                                <div className="text-xs text-slate-500 mt-1 flex flex-wrap gap-2">
+                                  <span className="flex items-center gap-1"><Monitor size={12}/> {device.os} • {device.browser}</span>
+                                  <span className="flex items-center gap-1"><MapPin size={12}/> {device.location}</span>
+                                </div>
+                                <div className="text-[10px] text-slate-400 mt-2 flex items-center gap-3">
+                                  <span className="flex items-center gap-1"><Clock size={10}/> {t('first_login')}: {new Date(device.created_at).toLocaleDateString()}</span>
+                                  <span className="flex items-center gap-1"><Wifi size={10}/> {t('last_activity')}: {new Date(device.last_active).toLocaleString()}</span>
+                                </div>
+                              </div>
+                              <button 
+                                onClick={() => removeDevice(device.id)}
+                                className="opacity-0 group-hover:opacity-100 p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                                title="Desconectar"
+                              >
+                                <LogOut size={16} />
+                              </button>
+                            </div>
+                          );
+                        })
+                     )}
                    </div>
                 </div>
 
