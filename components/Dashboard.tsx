@@ -214,7 +214,7 @@ const TRANSLATIONS = {
     email_marketing: 'Email Marketing',
     email_marketing_desc: 'Recibe noticias y consejos de ventas.',
     push_notif: 'Notificaciones Push',
-    push_notif_desc: 'Alertas en el navegador sobre vendas.',
+    push_notif_desc: 'Alertas en el navegador sobre ventas.',
     sms_sales: 'SMS (Ventas)',
     sms_sales_desc: 'Recibe SMS por cada venta realizada.',
     connected_devices: 'Dispositivos Conectados',
@@ -410,31 +410,25 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
     } catch (e) { console.error('IP Fetch error', e); }
 
     const newDeviceSession: Partial<DeviceSession> = {
-      user_id: session.user.id, // Needed for RLS
+      user_id: session.user.id,
       device_name: info.name,
       device_type: info.type,
       os: info.os,
       browser: info.browser,
       ip: ip,
       location: location,
-      user_agent: ua,
       last_active: new Date().toISOString()
-    } as any; // Cast as any to allow user_agent if it's not in DeviceSession or ensure DeviceSession has it. 
-    // Wait, user_agent is missing from DeviceSession but used here?
-    // Let's assume user_agent is needed for DB but not UI. If it is in DB, we should add it to interface or keep it as Partial and ignore type error if not used in UI.
-    // However, the error reported is specifically about user_id.
-    // Let's stick to fixing user_id.
+    } as any; 
 
     // 2. Check if device exists in DB (simulate uniqueness by User Agent + IP)
-    // NOTE: In a real app, we'd use a cookie/token ID for the device. Here we use heuristics.
     const { data: existingDevices, error: fetchError } = await supabase
       .from('user_devices')
       .select('*')
       .eq('user_agent', ua)
-      .eq('ip', ip) // IP check to differentiate same browser on diff network
+      .eq('ip', ip) 
       .eq('user_id', session.user.id);
 
-    if (fetchError && fetchError.code !== '42P01') { // Ignore "relation does not exist" if table missing
+    if (fetchError && fetchError.code !== '42P01') { 
        console.error("Error fetching devices", fetchError);
     }
 
@@ -453,7 +447,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
       isNewDevice = true;
       const { data: inserted, error: insertError } = await supabase
         .from('user_devices')
-        .insert([newDeviceSession])
+        .insert([{...newDeviceSession, user_agent: ua}])
         .select();
       
       if (!insertError && inserted && inserted.length > 0) {
@@ -461,8 +455,11 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
       }
     }
 
-    // 3. Set local state
-    setCurrentDevice({ ...newDeviceSession, id: deviceId, created_at: new Date().toISOString(), is_current: true } as DeviceSession);
+    // 3. Set local state & Persist ID for Realtime Listener
+    if (deviceId) {
+      localStorage.setItem('payeasy_device_id', deviceId);
+      setCurrentDevice({ ...newDeviceSession, id: deviceId, created_at: new Date().toISOString(), is_current: true } as DeviceSession);
+    }
 
     // 4. Send Email if NEW device
     if (isNewDevice) {
@@ -471,7 +468,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
       const targetUrl = 'https://api.resend.com/emails';
       const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(targetUrl);
 
-      // Using Proxy to send email securely-ish (client-side limitation workaround)
       fetch(proxyUrl, {
         method: 'POST',
         headers: {
