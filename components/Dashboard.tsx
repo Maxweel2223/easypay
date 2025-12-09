@@ -39,7 +39,8 @@ import {
   AlertCircle,
   Edit3,
   ExternalLink,
-  History
+  History,
+  ArrowRight
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../supabaseClient';
@@ -81,6 +82,7 @@ interface Product {
 // Interface para Histórico de Links
 interface PaymentLink {
   id: string;
+  user_id: string;
   product_id: string;
   product_name: string;
   url: string;
@@ -115,6 +117,8 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
   // Link History Logic
   const [paymentLinks, setPaymentLinks] = useState<PaymentLink[]>([]);
   const [selectedProductIdForLink, setSelectedProductIdForLink] = useState('');
+  const [isCreatingLink, setIsCreatingLink] = useState(false);
+  const [loadingLinks, setLoadingLinks] = useState(false);
   
   // Product Creation/Edit Modal State
   const [showProductModal, setShowProductModal] = useState(false);
@@ -153,53 +157,75 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
 
     if (data) {
       setProducts(data);
-    } else {
-      // Mock data for demo if DB empty or error
-      if (products.length === 0) {
-          setProducts([
-            { 
-              id: '123-abc', user_id: session.user.id, name: 'Curso Marketing Digital', category: 'cursos', subcategory: 'Marketing',
-              description: 'Curso completo.', price: 2500, whatsapp: '', status: 'active', is_limited_time: false, image_url: null,
-              has_offer: false, offer_title: '', offer_price: 0, redemption_link: '', pixel_facebook: '', pixel_google: '',
-              sales_count: 42, total_revenue: 105000, created_at: new Date().toISOString()
-            }
-          ]);
-      }
-    }
+    } 
     setLoadingProducts(false);
   };
 
+  // Fetch Links
+  const fetchLinks = async () => {
+      setLoadingLinks(true);
+      const { data, error } = await supabase
+        .from('payment_links')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false });
+
+      if (data) {
+          setPaymentLinks(data);
+      }
+      setLoadingLinks(false);
+  };
+
   useEffect(() => {
-    fetchProducts();
+    if (activeTab === 'products' || activeTab === 'overview') fetchProducts();
+    if (activeTab === 'links') {
+        fetchProducts(); // Need products to create links
+        fetchLinks();
+    }
+    
     // Realtime listener
-    const channel = supabase.channel('product_updates')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `user_id=eq.${session.user.id}` }, 
-    () => {
-        fetchProducts();
-    })
+    const channel = supabase.channel('dashboard_updates')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `user_id=eq.${session.user.id}` }, () => fetchProducts())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_links', filter: `user_id=eq.${session.user.id}` }, () => fetchLinks())
     .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, []);
+  }, [activeTab]);
 
   // --- LINK GENERATION LOGIC ---
-  const generateLink = () => {
+  const generateLink = async () => {
     if (!selectedProductIdForLink) return;
-    const product = products.find(p => p.id === selectedProductIdForLink);
-    if (!product) return;
+    
+    setIsCreatingLink(true);
 
-    const newLink: PaymentLink = {
-      id: Math.random().toString(36).substr(2, 9),
-      product_id: product.id,
-      product_name: product.name,
-      url: `https://fastpayzinmoz.vercel.app/p/${product.id}`,
-      clicks: 0,
-      created_at: new Date().toISOString()
-    };
+    try {
+        const product = products.find(p => p.id === selectedProductIdForLink);
+        if (!product) throw new Error("Produto não encontrado");
 
-    setPaymentLinks([newLink, ...paymentLinks]);
-    setSelectedProductIdForLink('');
-    alert("Link criado com sucesso! Verifique o histórico.");
+        // Simular um "processamento" para UX (não ser instantâneo demais)
+        await new Promise(resolve => setTimeout(resolve, 1500));
+
+        const linkUrl = `https://fastpayzinmoz.vercel.app/p/${product.id}`;
+
+        const { data, error } = await supabase.from('payment_links').insert([{
+            user_id: session.user.id,
+            product_id: product.id,
+            product_name: product.name,
+            url: linkUrl,
+            clicks: 0
+        }]).select();
+
+        if (error) throw error;
+
+        // Limpar seleção
+        setSelectedProductIdForLink('');
+        // Feedback visual será a atualização da tabela via realtime ou fetchLinks
+        
+    } catch (e: any) {
+        alert("Erro ao criar link: " + e.message);
+    } finally {
+        setIsCreatingLink(false);
+    }
   };
 
   // --- PRODUCT FORM LOGIC (Edit/Create) ---
@@ -266,32 +292,32 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
             user_id: session.user.id,
             ...newProduct,
             status: finalStatus,
-            ...(editingId ? {} : { sales_count: 0, total_revenue: 0, created_at: new Date().toISOString(), id: Math.random().toString(36).substr(2, 9) })
+            ...(editingId ? {} : { sales_count: 0, total_revenue: 0 })
         };
 
-        // Simulating DB save
         if (editingId) {
-            setProducts(prev => prev.map(p => p.id === editingId ? { ...p, ...payload } as Product : p));
+             await supabase.from('products').update(payload).eq('id', editingId);
         } else {
-            setProducts(prev => [payload as Product, ...prev]);
+             await supabase.from('products').insert([payload]);
         }
 
         setShowProductModal(false);
         
         // AI Analysis Simulation
         if (finalStatus === 'analyzing') {
-             setTimeout(() => {
-                 const passed = Math.random() > 0.1; // 90% pass rate
+             setTimeout(async () => {
+                 const passed = Math.random() > 0.1; 
                  const resultStatus = passed ? 'active' : 'rejected';
                  
-                 setProducts(prev => prev.map(p => {
-                    // Find the product we just added/edited (using ID matching logic in real app)
-                    // Here we just match by name for demo simplicity or payload.id if new
-                    if (p.name === payload.name) return { ...p, status: resultStatus };
-                    return p;
-                 }));
+                 // Busca o produto mais recente (ou pelo ID se fosse edição real)
+                 // Aqui simplificamos pois é demo, mas em prod usaria o ID retornado do insert
+                 const { data } = await supabase.from('products').select('id').eq('name', payload.name).order('created_at', {ascending: false}).limit(1);
+                 
+                 if (data && data[0]) {
+                    await supabase.from('products').update({ status: resultStatus }).eq('id', data[0].id);
+                 }
 
-                 if (resultStatus === 'rejected') alert("Produto rejeitado pela IA.");
+                 if (resultStatus === 'rejected') alert(`O produto ${payload.name} foi rejeitado pela IA.`);
              }, 3000);
         }
 
@@ -404,6 +430,11 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
                       <div key={product.id} className={`bg-white rounded-2xl p-6 shadow-sm border flex flex-col md:flex-row items-center gap-6 ${product.status === 'rejected' ? 'border-red-200 bg-red-50/10' : 'border-slate-100 hover:border-brand-200'}`}>
                           <div className="w-20 h-20 rounded-xl bg-slate-100 shrink-0 overflow-hidden border border-slate-200 relative">
                               {product.image_url && <img src={product.image_url} alt={product.name} className="w-full h-full object-cover" />}
+                              {product.status === 'analyzing' && (
+                                <div className="absolute inset-0 bg-white/60 flex items-center justify-center backdrop-blur-sm">
+                                    <Loader2 className="animate-spin text-brand-600" />
+                                </div>
+                              )}
                           </div>
                           
                           <div className="flex-1 w-full text-center md:text-left">
@@ -436,7 +467,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
           </div>
         )}
 
-        {/* PAYMENT LINKS TAB (NEW) */}
+        {/* PAYMENT LINKS TAB */}
         {activeTab === 'links' && (
            <div className="space-y-8 animate-fadeIn">
                
@@ -468,10 +499,16 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
                        </div>
                        <button 
                          onClick={generateLink}
-                         disabled={!selectedProductIdForLink}
-                         className="w-full md:w-auto px-6 py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                         disabled={!selectedProductIdForLink || isCreatingLink}
+                         className="w-full md:w-auto px-6 py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 min-w-[180px] justify-center"
                        >
-                         Gerar Link Único
+                         {isCreatingLink ? (
+                             <>
+                                <Loader2 size={18} className="animate-spin" /> Processando...
+                             </>
+                         ) : (
+                             'Gerar Link Único'
+                         )}
                        </button>
                    </div>
                </div>
@@ -480,9 +517,10 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
                <div className="bg-white rounded-2xl border border-slate-100 overflow-hidden">
                    <div className="p-6 border-b border-slate-100 flex items-center justify-between">
                        <h3 className="font-bold text-slate-800 flex items-center gap-2"><History size={20} className="text-slate-400"/> Histórico de Links</h3>
+                       {loadingLinks && <Loader2 size={18} className="animate-spin text-brand-600" />}
                    </div>
                    
-                   {paymentLinks.length === 0 ? (
+                   {paymentLinks.length === 0 && !loadingLinks ? (
                        <div className="p-12 text-center text-slate-400">
                            <LinkIcon size={48} className="mx-auto mb-4 opacity-20"/>
                            <p>Nenhum link gerado ainda.</p>
@@ -507,14 +545,14 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
                                            <td className="p-4">
                                                <div 
                                                  onClick={() => {navigator.clipboard.writeText(link.url); alert("Copiado!");}}
-                                                 className="flex items-center gap-2 text-brand-600 cursor-pointer hover:underline max-w-[200px] truncate"
+                                                 className="flex items-center gap-2 text-brand-600 cursor-pointer hover:underline max-w-[200px] truncate font-mono bg-slate-100 px-2 py-1 rounded"
                                                >
                                                    <Copy size={14}/> {link.url}
                                                </div>
                                            </td>
                                            <td className="p-4 text-center text-slate-500">{link.clicks}</td>
                                            <td className="p-4 text-center">
-                                               <a href={`/p/${link.product_id}`} target="_blank" className="text-slate-400 hover:text-slate-600">
+                                               <a href={link.url} target="_blank" className="text-slate-400 hover:text-slate-600">
                                                    <ExternalLink size={16} />
                                                </a>
                                            </td>
@@ -557,10 +595,8 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
                 </button>
             </div>
 
-            {/* Steps Indicator & Form Body (Simplified for brevity, same structure as before but ensuring newProduct state binds) */}
+            {/* Form Body - Reusing logic, simplified visually for brevity */}
             <div className="flex-1 overflow-y-auto p-8 bg-slate-50/50">
-               {/* ... (Same Form Fields logic as previous version, relying on newProduct state) ... */}
-               {/* Re-using the essential parts for context in this split view */}
                <div className="max-w-3xl mx-auto space-y-6">
                    {productFormStep === 1 && (
                        <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 space-y-4">
@@ -570,6 +606,15 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
                            <div className="flex justify-end">
                                <button onClick={handleGenerateDescriptionAI} className="text-purple-600 text-sm font-bold flex gap-1 items-center"><Sparkles size={14}/> Gerar com IA</button>
                            </div>
+                           <div className="mt-4">
+                                <p className="text-sm font-bold text-slate-700 mb-2">Imagem URL (Demo)</p>
+                                <div className="flex gap-2">
+                                     <input type="text" className="w-full p-2 text-sm border rounded" placeholder="URL da imagem..." value={newProduct.image_url || ''} onChange={e => setNewProduct({...newProduct, image_url: e.target.value})} />
+                                     <input type="file" className="hidden" ref={productImageInputRef} onChange={handleProductImageUpload} />
+                                     <button onClick={() => productImageInputRef.current?.click()} className="px-3 py-1 bg-slate-200 text-xs font-bold rounded">Upload</button>
+                                </div>
+                                {newProduct.image_url && <img src={newProduct.image_url} className="w-20 h-20 object-cover mt-2 rounded border" />}
+                           </div>
                        </div>
                    )}
                    {productFormStep === 2 && (
@@ -577,7 +622,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
                            <h4 className="font-bold text-slate-800">Preço e Oferta</h4>
                            <input type="number" placeholder="Preço (MT)" className="w-full p-3 border rounded-xl font-bold text-lg" value={newProduct.price || ''} onChange={e => setNewProduct({...newProduct, price: parseFloat(e.target.value)})} />
                            
-                           {/* Switches with High Visibility */}
+                           {/* Switches */}
                            <div className="flex items-center justify-between p-4 bg-slate-50 rounded-xl">
                                <span className="font-bold text-slate-700">Tempo Limitado (Escassez)</span>
                                <div 
@@ -597,12 +642,19 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
                                    <div className={`bg-white w-4 h-4 rounded-full shadow-sm transform transition-transform ${newProduct.has_offer ? 'translate-x-6' : 'translate-x-0'}`}></div>
                                </div>
                            </div>
+                           {newProduct.has_offer && (
+                                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg space-y-2">
+                                    <input type="text" placeholder="Título da oferta extra" className="w-full p-2 border rounded text-sm" value={newProduct.offer_title} onChange={e => setNewProduct({...newProduct, offer_title: e.target.value})} />
+                                    <input type="number" placeholder="Preço da oferta extra" className="w-full p-2 border rounded text-sm" value={newProduct.offer_price || ''} onChange={e => setNewProduct({...newProduct, offer_price: parseFloat(e.target.value)})} />
+                                </div>
+                           )}
                        </div>
                    )}
                    {productFormStep === 3 && (
                        <div className="text-center p-8">
                            <p className="text-slate-600 mb-4">Seu produto passará por uma análise de 3 segundos da IA.</p>
-                           <button onClick={() => saveProduct('active')} className="bg-brand-600 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-brand-200">
+                           <button onClick={() => saveProduct('active')} disabled={isSavingProduct} className="bg-brand-600 text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-brand-200 w-full flex justify-center items-center gap-2">
+                               {isSavingProduct && <Loader2 className="animate-spin" size={20} />}
                                {isSavingProduct ? 'Salvando...' : 'Salvar e Solicitar Análise'}
                            </button>
                        </div>
