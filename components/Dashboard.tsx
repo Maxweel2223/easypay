@@ -225,10 +225,11 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
 
       setDeleteModal({ ...deleteModal, isOpen: false });
 
-      // 1. Optimistic UI Update (Remove immediately)
+      // Store previous state for rollback
       const previousProducts = [...products];
       const previousLinks = [...paymentLinks];
 
+      // Optimistic Update
       if (type === 'link') {
           setPaymentLinks(prev => prev.filter(item => item.id !== id));
       } else {
@@ -236,23 +237,34 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
           setPaymentLinks(prev => prev.filter(item => item.product_id !== id));
       }
 
-      // 2. Database Operation
+      // Database Operation with Verification
       try {
           if (type === 'link') {
-              const { error } = await supabase.from('payment_links').delete().eq('id', id);
+              // We use .select() to ensure the row was actually found and deleted
+              const { error, data } = await supabase.from('payment_links').delete().eq('id', id).select();
               if (error) throw error;
+              if (!data || data.length === 0) {
+                  throw new Error("O item não foi apagado. Verifique se você tem permissão ou se ele já foi removido.");
+              }
           } else {
-              // Delete dependencies first if not cascaded
+              // Delete dependencies first
               await supabase.from('payment_links').delete().eq('product_id', id);
-              const { error } = await supabase.from('products').delete().eq('id', id);
+              
+              const { error, data } = await supabase.from('products').delete().eq('id', id).select();
               if (error) throw error;
+              if (!data || data.length === 0) {
+                  throw new Error("Produto não encontrado no servidor para exclusão.");
+              }
           }
       } catch (error: any) {
-          // 3. Rollback on Error
-          alert(`Erro ao excluir: ${error.message}`);
+          console.error("Delete failed:", error);
+          alert(`Falha ao excluir: ${error.message}`);
+          
+          // Rollback State
           setProducts(previousProducts);
           setPaymentLinks(previousLinks);
-          fetchData(); // Sync to be sure
+          // Refresh data to be sure
+          fetchData();
       }
   };
 

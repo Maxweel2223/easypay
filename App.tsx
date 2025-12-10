@@ -29,13 +29,19 @@ const App: React.FC = () => {
         const path = window.location.pathname;
         let isCheckout = false;
         
-        // 1. Check for Payment Link
+        // 1. Check for Payment Link with robust parsing
+        // Handles /p/ID, /p/ID/, /p/ID?ref=...
         if (path.startsWith('/p/')) {
-           const productId = path.split('/p/')[1];
-           if (productId) {
-             setCheckoutProductId(productId);
-             setCurrentView('checkout');
-             isCheckout = true;
+           const rawId = path.split('/p/')[1];
+           if (rawId) {
+             // Clean ID: remove trailing slashes and query parameters
+             const cleanId = rawId.split('/')[0].split('?')[0];
+             
+             if (cleanId) {
+               setCheckoutProductId(cleanId);
+               setCurrentView('checkout');
+               isCheckout = true;
+             }
            }
         }
 
@@ -55,12 +61,7 @@ const App: React.FC = () => {
                     window.history.pushState({}, '', '/dashboard');
                     setCurrentView('dashboard');
                 } else {
-                     // Default logged in view
-                     if (currentView === 'landing') { // Only redirect if strictly landing
-                        // Optional: stay on landing or go to dashboard?
-                        // Usually apps go to dashboard.
-                        // setCurrentView('dashboard'); 
-                     }
+                     // Default logged in view could be dashboard or landing
                 }
             } else {
                 // Public Routes
