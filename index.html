@@ -16,18 +16,37 @@
             fontFamily: {
               sans: ['Inter', 'sans-serif'],
             },
+            boxShadow: {
+              'glow': '0 0 20px rgba(124, 58, 237, 0.5)',
+              'card': '0 4px 20px -2px rgba(45, 27, 105, 0.05)',
+            },
             colors: {
+              // Re-mapping Slate to the "Dark Purple" text scale for high readability and brand consistency
+              slate: {
+                50: '#F8F5FF', // Background Oficial (Lilás ultra suave)
+                100: '#F3E8FF',
+                200: '#E9D5FF',
+                300: '#D8B4FE',
+                400: '#A855F7',
+                500: '#8B5CF6',
+                600: '#7C3AED',
+                700: '#6D28D9',
+                800: '#5B21B6',
+                900: '#2D1B69', // Cor de Texto Oficial (Roxo escuro)
+                950: '#1E1045',
+              },
+              // Official Brand Palette
               brand: {
-                50: '#ecfeff',
-                100: '#cffafe',
-                200: '#a5f3fc',
-                300: '#67e8f9',
-                400: '#22d3ee',
-                500: '#06b6d4',
-                600: '#0891b2', // Primary Brand Color
-                700: '#0e7490',
-                800: '#155e75',
-                900: '#164e63',
+                50: '#F8F5FF', // Lilás Suave
+                100: '#F3E8FF',
+                200: '#E9D5FF',
+                300: '#C084FC', // Secundária (Pastel)
+                400: '#A855F7', // Gradient Start
+                500: '#8B5CF6',
+                600: '#7C3AED', // Primária (Roxo Forte)
+                700: '#6D28D9',
+                800: '#5B21B6',
+                900: '#2D1B69', // Texto
               }
             }
           }
@@ -37,11 +56,28 @@
     <style>
       body {
         font-family: 'Inter', sans-serif;
+        background-color: #F8F5FF; /* Applying the official background color */
+        color: #2D1B69;
         scroll-behavior: smooth;
       }
       .glass-effect {
-        background: rgba(255, 255, 255, 0.7);
-        backdrop-filter: blur(10px);
+        background: rgba(255, 255, 255, 0.8);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.5);
+      }
+      /* Custom Scrollbar */
+      ::-webkit-scrollbar {
+        width: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: #F8F5FF; 
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #C084FC; 
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #7C3AED; 
       }
     </style>
   <script type="importmap">
@@ -59,7 +95,7 @@
 </script>
 <link rel="stylesheet" href="/index.css">
 </head>
-  <body class="bg-white text-slate-900 antialiased">
+  <body class="bg-slate-50 text-slate-900 antialiased selection:bg-brand-200 selection:text-brand-900">
     <div id="root"></div>
   <script type="module" src="/index.tsx"></script>
 </body>

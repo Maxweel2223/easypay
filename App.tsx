@@ -170,7 +170,7 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen flex flex-col overflow-x-hidden font-sans bg-white text-slate-900">
+    <div className="min-h-screen flex flex-col overflow-x-hidden font-sans bg-slate-50 text-slate-900">
       
       {currentView === 'landing' && (
         <>
