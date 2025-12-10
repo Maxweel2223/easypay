@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../supabaseClient';
+import { GoogleGenAI } from "@google/genai";
 
 type Tab = 'overview' | 'products' | 'links' | 'settings';
 type ProductStatus = 'draft' | 'analyzing' | 'active' | 'rejected';
@@ -101,6 +102,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
   
   const [productFormStep, setProductFormStep] = useState(1);
   const [isSavingProduct, setIsSavingProduct] = useState(false);
+  const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
 
   // New Product Form
@@ -157,9 +159,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
     // Subscribe to realtime changes for background updates
     const channel = supabase.channel('dashboard_updates')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `user_id=eq.${session.user.id}` }, (payload) => {
-         // Optionally handle realtime payload here, but we are doing optimistic updates mostly
          if (payload.eventType === 'INSERT') setProducts(prev => [payload.new as Product, ...prev]);
-         // Updates and deletes handled locally for speed, but this ensures sync
     })
     .subscribe();
 
@@ -223,23 +223,36 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
       const { type, id } = deleteModal;
       if (!id || !type) return;
 
-      // Optimistic UI Update - Remove immediately from UI
+      setDeleteModal({ ...deleteModal, isOpen: false });
+
+      // 1. Optimistic UI Update (Remove immediately)
+      const previousProducts = [...products];
+      const previousLinks = [...paymentLinks];
+
       if (type === 'link') {
           setPaymentLinks(prev => prev.filter(item => item.id !== id));
       } else {
           setProducts(prev => prev.filter(item => item.id !== id));
-          // If product is deleted, also remove associated links from UI
           setPaymentLinks(prev => prev.filter(item => item.product_id !== id));
       }
-      
-      setDeleteModal({ ...deleteModal, isOpen: false });
 
-      // Database Operation
-      if (type === 'link') {
-          await supabase.from('payment_links').delete().eq('id', id);
-      } else {
-          await supabase.from('products').delete().eq('id', id);
-          await supabase.from('payment_links').delete().eq('product_id', id);
+      // 2. Database Operation
+      try {
+          if (type === 'link') {
+              const { error } = await supabase.from('payment_links').delete().eq('id', id);
+              if (error) throw error;
+          } else {
+              // Delete dependencies first if not cascaded
+              await supabase.from('payment_links').delete().eq('product_id', id);
+              const { error } = await supabase.from('products').delete().eq('id', id);
+              if (error) throw error;
+          }
+      } catch (error: any) {
+          // 3. Rollback on Error
+          alert(`Erro ao excluir: ${error.message}`);
+          setProducts(previousProducts);
+          setPaymentLinks(previousLinks);
+          fetchData(); // Sync to be sure
       }
   };
 
@@ -260,13 +273,38 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
     setShowProductModal(true);
   };
 
-  const handleGenerateDescriptionAI = () => {
-    if (!newProduct.name) return alert("Digite o nome primeiro.");
-    const descriptions = [
-        `Domine ${newProduct.name} com este guia completo e prático.`,
-        `A solução definitiva para quem busca resultados em ${newProduct.name}.`
-    ];
-    setNewProduct(p => ({ ...p, description: descriptions[Math.floor(Math.random() * descriptions.length)] }));
+  const handleGenerateDescriptionAI = async () => {
+    if (!newProduct.name) return alert("Digite o nome do produto primeiro.");
+    
+    setIsGeneratingAI(true);
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const model = ai.models.getGenerativeModel({ model: "gemini-2.5-flash" });
+        
+        const prompt = `
+          Atue como um especialista em Copywriting para produtos digitais.
+          Escreva uma descrição curta, persuasiva e focada em vendas (máximo 300 caracteres) para um produto chamado: "${newProduct.name}".
+          Categoria: ${newProduct.category}.
+          Público: Moçambique.
+          Use gatilhos mentais e emojis. Não coloque aspas na resposta.
+        `;
+
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+        
+        setNewProduct(p => ({ ...p, description: text.trim() }));
+    } catch (e: any) {
+        console.error(e);
+        // Fallback
+        const descriptions = [
+            `🚀 Domine ${newProduct.name} hoje mesmo! O guia definitivo para quem quer resultados reais em Moçambique.`,
+            `💡 Transforme sua vida com ${newProduct.name}. Conteúdo prático, direto ao ponto e acessível. Compre agora!`
+        ];
+        setNewProduct(p => ({ ...p, description: descriptions[Math.floor(Math.random() * descriptions.length)] }));
+        alert("IA indisponível no momento. Geramos uma descrição padrão.");
+    } finally {
+        setIsGeneratingAI(false);
+    }
   };
 
   const handleProductImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -716,7 +754,14 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                                <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Descrição</label>
                                <div className="relative">
                                    <textarea className="w-full p-4 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-brand-500 outline-none transition-all min-h-[120px] resize-y" placeholder="Descreva os benefícios do seu produto..." value={newProduct.description} onChange={e => setNewProduct({...newProduct, description: e.target.value})}></textarea>
-                                   <button onClick={handleGenerateDescriptionAI} className="absolute bottom-3 right-3 text-purple-600 bg-purple-50 hover:bg-purple-100 px-3 py-1 rounded-lg text-xs font-bold flex gap-1 items-center transition-colors"><Sparkles size={12}/> AI Writer</button>
+                                   <button 
+                                     onClick={handleGenerateDescriptionAI} 
+                                     disabled={isGeneratingAI}
+                                     className="absolute bottom-3 right-3 text-purple-600 bg-purple-50 hover:bg-purple-100 px-3 py-1 rounded-lg text-xs font-bold flex gap-1 items-center transition-colors disabled:opacity-50"
+                                   >
+                                       {isGeneratingAI ? <Loader2 size={12} className="animate-spin"/> : <Sparkles size={12}/>}
+                                       {isGeneratingAI ? "Gerando..." : "Gerar com IA"}
+                                   </button>
                                </div>
                            </div>
                            <div>

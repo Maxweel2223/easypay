@@ -43,21 +43,25 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
       setErrorProduct(false);
       
       try {
+          // NOTE: Ensure your Supabase RLS policies allow 'public' read access to 'products'.
+          // If RLS is set to 'authenticated' only, this will return null for non-logged users.
           const { data, error } = await supabase.from('products').select('*').eq('id', productId).maybeSingle();
           
-          if (error || !data) {
+          if (error) {
             console.error("Error fetching product:", error);
             setErrorProduct(true);
+          } else if (!data) {
+             console.warn("Product not found or RLS restricted.");
+             setErrorProduct(true);
           } else {
             setProduct(data);
-            // Increment View/Click Counter
-            // Note: Using RPC or standard update. Assuming we want to track anonymous views.
+            // Increment View/Click Counter safely
             if (data.id) {
-                 const currentViews = data.views_count || 0;
-                 await supabase.from('products').update({ views_count: currentViews + 1 }).eq('id', data.id);
+                 await supabase.from('products').update({ views_count: (data.views_count || 0) + 1 }).eq('id', data.id).select();
             }
           }
       } catch (err) {
+          console.error("Unexpected error:", err);
           setErrorProduct(true);
       } finally {
           // ENSURE loading is false regardless of outcome
@@ -100,9 +104,23 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
       }
 
       const cleanPhone = formData.whatsapp.replace(/\D/g, '');
+      
+      // Validation Logic for Prefixes
       if (cleanPhone.length < 9) {
-          alert("Número de telefone inválido.");
+          alert("Número de telefone inválido (mínimo 9 dígitos).");
           return;
+      }
+
+      if (paymentMethod === 'mpesa') {
+          if (!cleanPhone.startsWith('84') && !cleanPhone.startsWith('85')) {
+              setPaymentError("Para M-Pesa, o número deve começar com 84 ou 85.");
+              return;
+          }
+      } else if (paymentMethod === 'emola') {
+          if (!cleanPhone.startsWith('86') && !cleanPhone.startsWith('87')) {
+              setPaymentError("Para e-Mola, o número deve começar com 86 ou 87.");
+              return;
+          }
       }
 
       setIsProcessing(true);
@@ -195,6 +213,8 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
           </div>
       </div>
   );
+
+  const isMpesa = paymentMethod === 'mpesa';
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans pb-12 relative">
@@ -302,15 +322,18 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
                     </div>
 
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 ml-1">WhatsApp (M-Pesa/e-Mola)</label>
+                        {/* Dynamic Label based on Method */}
+                        <label className={`block text-xs font-bold uppercase mb-1.5 ml-1 transition-colors ${isMpesa ? 'text-red-500' : 'text-orange-500'}`}>
+                           {isMpesa ? "Número M-Pesa (Vodacom)" : "Número e-Mola (Movitel)"}
+                        </label>
                         <div className="relative group">
-                            <Smartphone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-brand-600 transition-colors" size={20} />
+                            <Smartphone className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${isMpesa ? 'text-red-400' : 'text-orange-400'}`} size={20} />
                             <input 
                                 type="tel"
                                 value={formData.whatsapp}
                                 onChange={e => setFormData({...formData, whatsapp: e.target.value})}
-                                className="w-full pl-12 p-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-500 outline-none transition-all font-medium text-slate-800 placeholder-slate-400"
-                                placeholder="84 123 4567"
+                                className={`w-full pl-12 p-4 bg-slate-50 border rounded-xl focus:ring-2 outline-none transition-all font-medium text-slate-800 placeholder-slate-400 ${isMpesa ? 'focus:ring-red-500 focus:border-red-500' : 'focus:ring-orange-500 focus:border-orange-500'}`}
+                                placeholder={isMpesa ? "84 123 4567" : "86 123 4567"}
                             />
                         </div>
                         <p className="text-[10px] text-slate-400 mt-2 ml-1 flex items-center gap-1">
