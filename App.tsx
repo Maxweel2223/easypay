@@ -24,38 +24,47 @@ const App: React.FC = () => {
   useEffect(() => {
     document.documentElement.classList.remove('dark');
 
-    // Simple routing check for payment links (e.g., /p/123)
+    // 1. Check for Payment Link URL first
     const path = window.location.pathname;
+    let isCheckout = false;
+
     if (path.startsWith('/p/')) {
        const productId = path.split('/p/')[1];
        if (productId) {
          setCheckoutProductId(productId);
          setCurrentView('checkout');
-         return; // Skip auth check if viewing checkout
+         isCheckout = true;
        }
     }
 
-    // Check active session on load
+    // 2. Check Auth Session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (session && !path.startsWith('/p/')) {
+      // Only redirect to dashboard if logged in AND NOT on a checkout page
+      if (session && !isCheckout) {
         setCurrentView('dashboard');
       }
     });
 
+    // 3. Listen for Auth Changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
+      
+      // If we are on checkout, stay there regardless of auth state
+      if (isCheckout) return;
+
       if (session) {
-         if (!checkoutProductId) setCurrentView('dashboard');
+         setCurrentView('dashboard');
       } else {
-        if (currentView === 'dashboard') {
+        // Only go to landing if we were inside the dashboard or login/register
+        if (currentView === 'dashboard' || currentView === 'settings') {
           setCurrentView('landing');
         }
       }
     });
 
     return () => subscription.unsubscribe();
-  }, []);
+  }, []); // Run once on mount
 
   // --- Realtime Remote Logout Logic ---
   useEffect(() => {
