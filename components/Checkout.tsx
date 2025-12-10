@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, ShieldCheck, CheckCircle2, Zap, Smartphone, Lock, User, Mail, AlertTriangle, Check, CreditCard, Loader2 } from 'lucide-react';
+import { Clock, ShieldCheck, CheckCircle2, Zap, Smartphone, Lock, User, Mail, AlertTriangle, Check, CreditCard, Loader2, XCircle } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 
 interface CheckoutProps {
@@ -26,6 +26,7 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
   const [addOrderBump, setAddOrderBump] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState(false);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
   const [timeLeft, setTimeLeft] = useState(6 * 60);
 
   const mpesaLogo = "https://play-lh.googleusercontent.com/BeFHX9dTKeuLrF8TA0gr9kfXLGicQtnxoTM8xJThn9EKCl-h5JmJoqFkaPBoo4qi7w";
@@ -36,21 +37,28 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
   const GIBRA_API_KEY = "afec688b6241cb5af687496eee6b7e919d4acafa9c2dafef2321185fe95e795280c645422557ae9c8b44eff1736503936379123aecf9a9ee9f8777215ae430b9";
   const GIBRA_WALLET_ID = "1bcc050c-fca2-4296-821d-30134d9a333c";
 
+  // 1. Fetch Product and Increment Click Counter
   useEffect(() => {
     const fetchProduct = async () => {
       setLoading(true);
       setErrorProduct(false);
       
-      // Use maybeSingle to avoid 406 errors on 0 rows
       const { data, error } = await supabase.from('products').select('*').eq('id', productId).maybeSingle();
       
-      if (error) {
+      if (error || !data) {
         console.error("Error fetching product:", error);
         setErrorProduct(true);
-      } else if (data) {
-        setProduct(data);
       } else {
-        setErrorProduct(true);
+        setProduct(data);
+        // Increment View/Click Counter
+        // Note: Using RPC or standard update. Assuming we want to track anonymous views.
+        if (data.id) {
+             const currentViews = data.views_count || 0;
+             await supabase.from('products').update({ views_count: currentViews + 1 }).eq('id', data.id);
+             
+             // Also increment linked payment_links clicks if applicable (optional logic if we had link ID)
+             await supabase.rpc('increment_link_clicks', { product_uuid: data.id }).catch(e => console.log('RPC optional'));
+        }
       }
       setLoading(false);
     };
@@ -76,42 +84,36 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
     return total;
   };
 
-  const getPhonePrefix = () => {
-      if (paymentMethod === 'mpesa') return '84 ou 85';
-      return '86 ou 87';
-  };
-
   const playSuccessSound = () => {
       const audio = new Audio(successSoundUrl);
-      audio.play().catch(e => console.log("Interação necessária para tocar áudio."));
+      audio.play().catch(e => console.log("Audio requires interaction"));
   };
 
   const handlePayment = async () => {
+      setPaymentError(null);
+
       if (!formData.fullName || !formData.whatsapp) {
           alert("Por favor, preencha seu nome e número de telefone.");
           return;
       }
 
-      // Validar telefone (deve ser 84/85/86/87 + 7 digitos = 9 digitos total)
       const cleanPhone = formData.whatsapp.replace(/\D/g, '');
       if (cleanPhone.length < 9) {
-          alert("Número de telefone inválido. Use o formato: 841234567");
+          alert("Número de telefone inválido.");
           return;
       }
 
       setIsProcessing(true);
 
       try {
-          // Utilizando endpoint de Transferência conforme solicitado explicitamente
           const endpoint = "https://gibrapay.online/v1/transfer";
-          
           const payload = {
               wallet_id: GIBRA_WALLET_ID,
               amount: calculateTotal(),
               number_phone: cleanPhone
           };
 
-          console.log("Iniciando transação GibraPay...", payload);
+          console.log("Processing payment...", payload);
 
           const response = await fetch(endpoint, {
               method: "POST",
@@ -122,45 +124,58 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
               body: JSON.stringify(payload)
           });
 
-          // GibraPay retorna JSON. Precisamos tentar ler, mas se falhar (CORS opaco), tratamos.
           let result;
           try {
              result = await response.json();
-             console.log("GibraPay Resposta:", result);
+             console.log("GibraPay Response:", result);
           } catch (e) {
-             console.log("Não foi possível ler JSON da resposta (possível erro de CORS ou rede).");
+             // If JSON parse fails, it's likely a network or CORS issue, treated as error
+             throw new Error("Erro de comunicação com o servidor de pagamento.");
           }
 
-          // Verificação de sucesso
-          // A API deve retornar status 200/201. 
-          // Se der erro de CORS no browser, vai cair no catch abaixo.
-          if (response.ok) {
-              // SUCESSO!
-              setPaymentSuccess(true);
-              playSuccessSound();
+          // --- CRITICAL SECURITY CHECK ---
+          // Rule 5 & 6: Validate strict success
+          
+          const isStatusError = result.status === 'error';
+          const isTransactionDeclined = result.callback?.transaction_status === 'Declined';
+          const isStatusPending = result.status === 'Pending'; // We don't release on Pending unless we have a webhook
+          const isDataFailed = result.data?.status === 'failed';
 
-              // Redirecionamento após 4 segundos
-              setTimeout(() => {
-                 if (product.redemption_link) {
-                     // Verifica se tem protocolo, senão adiciona https
-                     let url = product.redemption_link;
-                     if (!url.startsWith('http')) url = 'https://' + url;
-                     window.location.href = url;
-                 } else {
-                     alert("Pagamento confirmado! O vendedor não configurou link de entrega. Entre em contato com o suporte.");
-                     setIsProcessing(false);
-                 }
-              }, 4000);
-
-          } else {
-              // Erro da API (ex: saldo insuficiente, dados errados)
-              const errorMsg = result?.message || "Erro desconhecido na API de pagamento.";
-              throw new Error(errorMsg);
+          if (isStatusError || isTransactionDeclined || isDataFailed) {
+              const msg = result.message || "Pagamento recusado ou falhou.";
+              throw new Error(msg);
           }
+
+          if (!response.ok) {
+              throw new Error("Erro na requisição de pagamento (HTTP Error).");
+          }
+
+          // Only if explicitly successful (assuming 200/201 and no error flags)
+          // Since GibraPay v1/transfer is usually instant for some providers or async for others,
+          // if it returns "Pending", in a real app we would poll. 
+          // For this prompt's requirement "Rule 6: If Pending -> DO NOT deliver", we throw error or ask to wait.
+          if (isStatusPending) {
+               throw new Error("Pagamento pendente. Por favor, aguarde a confirmação no seu celular e tente novamente.");
+          }
+
+          // SUCCESS
+          setPaymentSuccess(true);
+          playSuccessSound();
+
+          setTimeout(() => {
+             if (product.redemption_link) {
+                 let url = product.redemption_link;
+                 if (!url.startsWith('http')) url = 'https://' + url;
+                 window.location.href = url;
+             } else {
+                 alert("Pagamento confirmado! Contate o suporte para receber seu produto.");
+                 setIsProcessing(false);
+             }
+          }, 4000);
 
       } catch (error: any) {
-          console.error("Erro no pagamento:", error);
-          alert(`Falha no pagamento: ${error.message}. Verifique o número e tente novamente.`);
+          console.error("Payment Error:", error);
+          setPaymentError(error.message || "Erro desconhecido.");
           setIsProcessing(false);
       }
   };
@@ -169,7 +184,7 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-white gap-4">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-600"></div>
-        <p className="text-slate-500 text-sm animate-pulse">Carregando produto...</p>
+        <p className="text-slate-500 text-sm animate-pulse">Carregando produto seguro...</p>
       </div>
     );
   }
@@ -180,9 +195,8 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
               <div className="w-20 h-20 bg-red-50 rounded-full flex items-center justify-center mx-auto mb-6">
                  <AlertTriangle size={32} className="text-red-500"/>
               </div>
-              <h2 className="text-xl font-bold text-slate-900 mb-2">Produto não encontrado</h2>
-              <p className="text-slate-500 text-sm mb-6">O link pode estar incorreto ou o produto foi removido pelo vendedor.</p>
-              <a href="/" className="inline-block px-6 py-3 bg-slate-900 text-white rounded-lg font-bold text-sm">Voltar ao Início</a>
+              <h2 className="text-xl font-bold text-slate-900 mb-2">Produto não disponível</h2>
+              <p className="text-slate-500 text-sm mb-6">Este produto foi removido ou o link expirou.</p>
           </div>
       </div>
   );
@@ -190,15 +204,15 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
   return (
     <div className="min-h-screen bg-slate-50 font-sans pb-12 relative">
       
-      {/* SUCCESS POPUP OVERLAY */}
+      {/* SUCCESS POPUP */}
       {paymentSuccess && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/90 backdrop-blur-md animate-fadeIn p-4">
               <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl transform scale-100 animate-bounce-slow border-4 border-green-100">
                   <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner">
                       <CheckCircle2 size={56} className="text-green-600 animate-pulse"/>
                   </div>
-                  <h2 className="text-2xl font-bold text-slate-900 mb-2">Pagamento Realizado!</h2>
-                  <p className="text-slate-500 mb-8 leading-relaxed">Sua compra foi confirmada. Você será redirecionado para seu produto em instantes.</p>
+                  <h2 className="text-2xl font-bold text-slate-900 mb-2">Pagamento Confirmado!</h2>
+                  <p className="text-slate-500 mb-8 leading-relaxed">Transação aprovada. Redirecionando para seu acesso...</p>
                   
                   <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
                       <div className="h-full bg-green-500 animate-[width_4s_linear_forwards]" style={{width: '0%'}}></div>
@@ -217,7 +231,7 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
                  <span className="text-xs font-bold text-slate-700 uppercase tracking-wide">Checkout Seguro</span>
              </div>
              <div className="text-[10px] text-slate-400 font-mono bg-slate-50 px-2 py-1 rounded border border-slate-100">
-                 ID: {transactionId}
+                 REF: {transactionId}
              </div>
           </div>
       </div>
@@ -226,11 +240,11 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
         
         {/* Header & Title */}
         <div className="pt-8 px-6 text-center">
-            <h1 className="text-2xl font-extrabold text-slate-900 leading-tight mb-3">{product.name}</h1>
+            <h1 className="text-3xl font-extrabold text-slate-900 leading-tight mb-3 tracking-tight">{product.name}</h1>
             <p className="text-slate-500 text-sm leading-relaxed max-w-lg mx-auto">{product.description}</p>
         </div>
 
-        {/* Scarcity Timer (If Active) */}
+        {/* Scarcity Timer */}
         {product.is_limited_time && timeLeft > 0 && (
             <div className="mx-4 mt-8 bg-red-50 border border-red-100 rounded-xl p-4 flex items-center justify-between shadow-sm animate-pulse-slow">
                 <div className="flex items-center gap-3">
@@ -287,21 +301,7 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
                                 value={formData.fullName}
                                 onChange={e => setFormData({...formData, fullName: e.target.value})}
                                 className="w-full pl-12 p-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-500 outline-none transition-all font-medium text-slate-800 placeholder-slate-400"
-                                placeholder="Como gostaria de ser chamado?"
-                            />
-                        </div>
-                    </div>
-
-                    <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 ml-1">Email (Opcional)</label>
-                        <div className="relative group">
-                            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-brand-600 transition-colors" size={20} />
-                            <input 
-                                type="email"
-                                value={formData.email}
-                                onChange={e => setFormData({...formData, email: e.target.value})}
-                                className="w-full pl-12 p-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-500 outline-none transition-all font-medium text-slate-800 placeholder-slate-400"
-                                placeholder="Para receber o comprovativo"
+                                placeholder="Nome completo"
                             />
                         </div>
                     </div>
@@ -319,7 +319,7 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
                             />
                         </div>
                         <p className="text-[10px] text-slate-400 mt-2 ml-1 flex items-center gap-1">
-                            <Check size={10} /> O código de pagamento será enviado para este número.
+                            <Check size={10} /> O número deve ser o mesmo da conta de pagamento.
                         </p>
                     </div>
                 </div>
@@ -342,10 +342,10 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
                         </div>
                         <div>
                             <h4 className="font-bold text-slate-900 text-base leading-tight mb-1">
-                                Quero adicionar <span className="text-brand-600 underline decoration-2 decoration-brand-200 underline-offset-2">{product.offer_title}</span>
+                                Adicionar: <span className="text-brand-600">{product.offer_title}</span>
                             </h4>
                             <p className="text-sm text-slate-500">
-                                Oferta única por apenas <span className="font-bold text-slate-900 bg-yellow-100 px-1 rounded">{product.offer_price} MT</span>. Não perca essa chance.
+                                Oferta única por apenas <span className="font-bold text-slate-900 bg-yellow-100 px-1 rounded">{product.offer_price} MT</span>.
                             </p>
                         </div>
                     </div>
@@ -395,6 +395,17 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
                          <span className="font-extrabold text-2xl text-slate-900">{calculateTotal().toLocaleString()} <span className="text-sm font-medium text-slate-500">MT</span></span>
                     </div>
                 </div>
+
+                {/* Error Message Area */}
+                {paymentError && (
+                    <div className="mb-6 bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-3 animate-slideDown">
+                        <XCircle size={20} className="text-red-600 flex-shrink-0 mt-0.5" />
+                        <div>
+                            <h4 className="font-bold text-red-700 text-sm">Falha no Pagamento</h4>
+                            <p className="text-xs text-red-600 mt-1">{paymentError}</p>
+                        </div>
+                    </div>
+                )}
 
                 {/* Submit Button */}
                 <button 
