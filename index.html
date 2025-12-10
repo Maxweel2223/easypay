@@ -17,36 +17,24 @@
               sans: ['Inter', 'sans-serif'],
             },
             boxShadow: {
-              'glow': '0 0 20px rgba(124, 58, 237, 0.5)',
-              'card': '0 4px 20px -2px rgba(45, 27, 105, 0.05)',
+              'card': '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
             },
             colors: {
-              // Re-mapping Slate to the "Dark Purple" text scale for high readability and brand consistency
-              slate: {
-                50: '#F8F5FF', // Background Oficial (Lilás ultra suave)
-                100: '#F3E8FF',
-                200: '#E9D5FF',
-                300: '#D8B4FE',
-                400: '#A855F7',
-                500: '#8B5CF6',
-                600: '#7C3AED',
-                700: '#6D28D9',
-                800: '#5B21B6',
-                900: '#2D1B69', // Cor de Texto Oficial (Roxo escuro)
-                950: '#1E1045',
-              },
-              // Official Brand Palette
+              // Revert Slate to standard Tailwind Gray/Slate (Clean look)
+              // We do not override 'slate' here, letting Tailwind use its default professional grays.
+              
+              // Standard Professional Blue Brand Palette
               brand: {
-                50: '#F8F5FF', // Lilás Suave
-                100: '#F3E8FF',
-                200: '#E9D5FF',
-                300: '#C084FC', // Secundária (Pastel)
-                400: '#A855F7', // Gradient Start
-                500: '#8B5CF6',
-                600: '#7C3AED', // Primária (Roxo Forte)
-                700: '#6D28D9',
-                800: '#5B21B6',
-                900: '#2D1B69', // Texto
+                50: '#eff6ff',
+                100: '#dbeafe',
+                200: '#bfdbfe',
+                300: '#93c5fd',
+                400: '#60a5fa',
+                500: '#3b82f6',
+                600: '#2563eb', // Primary Blue
+                700: '#1d4ed8',
+                800: '#1e40af',
+                900: '#1e3a8a',
               }
             }
           }
@@ -56,28 +44,23 @@
     <style>
       body {
         font-family: 'Inter', sans-serif;
-        background-color: #F8F5FF; /* Applying the official background color */
-        color: #2D1B69;
+        background-color: #f8fafc; /* Standard Slate-50 */
+        color: #0f172a; /* Standard Slate-900 */
         scroll-behavior: smooth;
-      }
-      .glass-effect {
-        background: rgba(255, 255, 255, 0.8);
-        backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.5);
       }
       /* Custom Scrollbar */
       ::-webkit-scrollbar {
         width: 8px;
       }
       ::-webkit-scrollbar-track {
-        background: #F8F5FF; 
+        background: #f1f5f9; 
       }
       ::-webkit-scrollbar-thumb {
-        background: #C084FC; 
+        background: #cbd5e1; 
         border-radius: 4px;
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: #7C3AED; 
+        background: #94a3b8; 
       }
     </style>
   <script type="importmap">
