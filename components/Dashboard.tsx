@@ -596,7 +596,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                           </div>
 
                           {/* Actions Footer */}
-                          <div className="mt-auto grid grid-cols-3 gap-2">
+                          <div className="mt-auto grid grid-cols-2 gap-2">
                               <button 
                                 onClick={() => handleEditProduct(product)}
                                 className="flex items-center justify-center gap-1 py-2 rounded-lg text-slate-600 bg-slate-50 hover:bg-slate-100 text-xs font-bold transition-colors"
@@ -609,14 +609,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                               >
                                   <Trash2 size={14}/> Excluir
                               </button>
-                              <button 
-                                onClick={() => generateLink(product.id)}
-                                disabled={product.status !== 'active'}
-                                className="flex items-center justify-center gap-1 py-2 rounded-lg text-white bg-brand-600 hover:bg-brand-700 disabled:bg-slate-200 disabled:text-slate-400 text-xs font-bold transition-colors shadow-sm"
-                                title={product.status !== 'active' ? 'Produto deve estar ativo' : 'Gerar Link'}
-                              >
-                                  <LinkIcon size={14}/> Link
-                              </button>
+                              {/* Link Button Removed as requested */}
                           </div>
                       </div>
                   ))}

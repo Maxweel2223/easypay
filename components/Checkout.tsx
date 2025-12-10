@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, ShieldCheck, CheckCircle2, Zap, Smartphone, Lock, User, Mail, AlertTriangle, Check, CreditCard, Loader2, XCircle, Phone } from 'lucide-react';
 import { supabase } from '../supabaseClient';
+import { Resend } from 'resend';
 
 const mpesaLogo = "https://play-lh.googleusercontent.com/BeFHX9dTKeuLrF8TA0gr9kfXLGicQtnxoTM8xJThn9EKCl-h5JmJoqFkaPBoo4qi7w";
 const emolaLogo = "https://play-lh.googleusercontent.com/2TGAhJ55tiyhCwW0ZM43deGv4lUTFTBMoq83mnAO6-bU5hi2NPyKX8BN8iKt13irK7Y=w240-h480-rw";
@@ -124,9 +125,11 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
           sendSMS(ADMIN_NUM, msgAdmin)
       ]);
 
-      // 2. Enviar Email (Resend)
+      // 2. Enviar Email (Resend) - Usando a classe Resend
       const sendEmailViaResend = async () => {
         try {
+            const resend = new Resend(RESEND_API_KEY);
+
             // HTML do Email
             const emailHtml = `
               <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
@@ -147,19 +150,13 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
             const recipients = ['developermax2maker@gmail.com'];
             if (formData.email) recipients.push(formData.email);
 
-            await fetch('https://api.resend.com/emails', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${RESEND_API_KEY}`
-                },
-                body: JSON.stringify({
-                    from: 'PayEasy <onboarding@resend.dev>', // Domínio de teste obrigatório
-                    to: recipients,
-                    subject: `Venda Aprovada! - ${productName} (Ref: ${transactionId})`,
-                    html: emailHtml
-                })
+            await resend.emails.send({
+                from: 'onboarding@resend.dev',
+                to: recipients,
+                subject: `Venda Aprovada! - ${productName} (Ref: ${transactionId})`,
+                html: emailHtml
             });
+            
             console.log("Email Resend enviado com sucesso.");
         } catch (error) {
             console.error("Erro ao enviar email Resend:", error);

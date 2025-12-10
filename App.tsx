@@ -41,6 +41,35 @@ const App: React.FC = () => {
                setCheckoutProductId(cleanId);
                setCurrentView('checkout');
                isCheckout = true;
+
+               // --- CLICK TRACKING LOGIC ---
+               // Check if we already tracked this link in this session to prevent spamming
+               const sessionKey = `tracked_view_${cleanId}`;
+               if (!sessionStorage.getItem(sessionKey)) {
+                   try {
+                       // Find links associated with this product and increment clicks
+                       const { data: links } = await supabase
+                           .from('payment_links')
+                           .select('id, clicks')
+                           .eq('product_id', cleanId);
+                       
+                       if (links && links.length > 0) {
+                           // Increment stats for all links generated for this product (since URL structure is product-based)
+                           // Or specific link if we had the Link ID in URL.
+                           for (const link of links) {
+                               await supabase
+                                   .from('payment_links')
+                                   .update({ clicks: (link.clicks || 0) + 1 })
+                                   .eq('id', link.id);
+                           }
+                           console.log("Link click tracked");
+                       }
+                       sessionStorage.setItem(sessionKey, 'true');
+                   } catch (e) {
+                       console.warn("Failed to track click", e);
+                   }
+               }
+               // -----------------------------
              }
            }
         }
