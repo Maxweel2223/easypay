@@ -21,15 +21,23 @@ import {
   Image as ImageIcon,
   Search,
   UploadCloud,
-  AlertTriangle
+  AlertTriangle,
+  TrendingUp,
+  DollarSign,
+  PieChart,
+  BarChart3,
+  Calendar,
+  Filter
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../supabaseClient';
 import { GoogleGenAI } from "@google/genai";
 
-type Tab = 'overview' | 'products' | 'links' | 'settings';
+type Tab = 'overview' | 'products' | 'links' | 'sales' | 'settings';
 type ProductStatus = 'draft' | 'analyzing' | 'active' | 'rejected';
 type ProductCategory = 'ebooks' | 'cursos' | 'mentoria' | 'software' | 'audio' | 'templates' | 'outros';
+type PaymentMethod = 'mpesa' | 'emola';
+type SaleStatus = 'approved' | 'pending' | 'cancelled';
 
 interface DashboardProps {
   session: Session;
@@ -65,7 +73,21 @@ interface PaymentLink {
   product_id: string;
   product_name: string;
   url: string;
-  clicks: number;
+  created_at: string;
+}
+
+interface Sale {
+  id: string;
+  user_id: string;
+  product_id: string;
+  product_name: string;
+  customer_name: string;
+  customer_email: string;
+  customer_phone: string;
+  amount: number;
+  fee: number;
+  status: SaleStatus;
+  payment_method: PaymentMethod;
   created_at: string;
 }
 
@@ -83,6 +105,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
   // Data State
   const [products, setProducts] = useState<Product[]>([]);
   const [paymentLinks, setPaymentLinks] = useState<PaymentLink[]>([]);
+  const [sales, setSales] = useState<Sale[]>([]);
   const [loading, setLoading] = useState(true);
   
   // Create Link State
@@ -122,33 +145,76 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
     redemption_link: '',
   });
 
-  // Sync Tab with URL
+  // Helper Functions
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Bom dia';
+    if (hour < 18) return 'Boa tarde';
+    return 'Boa noite';
+  };
+
+  const calculateGrossRevenue = (salesData: Sale[]) => {
+      return salesData.filter(s => s.status === 'approved').reduce((acc, curr) => acc + curr.amount, 0);
+  };
+
+  const calculateNetRevenue = (salesData: Sale[]) => {
+      return salesData.filter(s => s.status === 'approved').reduce((acc, curr) => {
+          // 4.9% + 5MT fee logic
+          const fee = (curr.amount * 0.049) + 5;
+          return acc + (curr.amount - fee);
+      }, 0);
+  };
+
+  // Sync Tab with URL (Safe version)
   const changeTab = (tab: Tab) => {
       setActiveTab(tab);
-      window.history.pushState({}, '', `/dashboard/${tab}`);
+      try {
+        window.history.pushState({}, '', `/dashboard/${tab}`);
+      } catch (e) {
+        // Ignore SecurityError in restricted environments
+      }
       setMobileMenuOpen(false);
   };
 
   const fetchData = async () => {
     setLoading(true);
     
-    // Fetch Products
-    const { data: productsData } = await supabase
-      .from('products')
-      .select('*')
-      .eq('user_id', session.user.id)
-      .order('created_at', { ascending: false });
+    try {
+        // Fetch Products
+        const { data: productsData } = await supabase
+          .from('products')
+          .select('*')
+          .eq('user_id', session.user.id)
+          .order('created_at', { ascending: false });
 
-    if (productsData) setProducts(productsData);
+        if (productsData) setProducts(productsData);
 
-    // Fetch Links
-    const { data: linksData } = await supabase
-    .from('payment_links')
-    .select('*')
-    .eq('user_id', session.user.id)
-    .order('created_at', { ascending: false });
-    
-    if (linksData) setPaymentLinks(linksData);
+        // Fetch Links
+        const { data: linksData } = await supabase
+        .from('payment_links')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false });
+        
+        if (linksData) setPaymentLinks(linksData);
+
+        // Fetch Sales (Mocked structure for now as table might not exist in first migration)
+        const { data: salesData, error: salesError } = await supabase
+        .from('sales')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false });
+
+        if (!salesError && salesData) {
+            setSales(salesData);
+        } else {
+             // If table doesn't exist, we keep empty array
+             setSales([]);
+        }
+
+    } catch (e) {
+        console.error("Error fetching data", e);
+    }
     
     setLoading(false);
   };
@@ -156,7 +222,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
   useEffect(() => {
     fetchData();
     
-    // Subscribe to realtime changes for background updates
     const channel = supabase.channel('dashboard_updates')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `user_id=eq.${session.user.id}` }, (payload) => {
          if (payload.eventType === 'INSERT') setProducts(prev => [payload.new as Product, ...prev]);
@@ -177,30 +242,31 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
         const product = products.find(p => p.id === targetId);
         if (!product) throw new Error("Produto não encontrado");
 
-        // UX delay simulated for feeling of processing
-        await new Promise(resolve => setTimeout(resolve, 600)); 
-
-        const linkUrl = `https://fastpayzinmoz.vercel.app/p/${product.id}`;
-        
         const newLinkPayload = {
             user_id: session.user.id,
             product_id: product.id,
             product_name: product.name,
-            url: linkUrl,
-            clicks: 0
+            url: 'pending...',
         };
 
         const { data, error } = await supabase.from('payment_links').insert([newLinkPayload]).select().single();
 
         if (error) throw error;
+        if (!data) throw new Error("Falha ao criar link");
 
-        // Immediate Update (Optimistic)
-        if (data) {
-             setPaymentLinks(prev => [data, ...prev]);
-        }
+        const finalUrl = `https://fastpayzinmoz.vercel.app/p/${product.id}?ref=${data.id}`;
+        
+        const { data: updatedData, error: updateError } = await supabase
+            .from('payment_links')
+            .update({ url: finalUrl })
+            .eq('id', data.id)
+            .select()
+            .single();
+            
+        if (updateError) throw updateError;
 
+        setPaymentLinks(prev => [updatedData || data, ...prev]);
         setSelectedProductIdForLink('');
-        if (!prodId) alert("Link gerado e salvo no histórico!");
         if (activeTab !== 'links') changeTab('links');
 
     } catch (e: any) {
@@ -225,11 +291,9 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
 
       setDeleteModal({ ...deleteModal, isOpen: false });
 
-      // Store previous state for rollback
       const previousProducts = [...products];
       const previousLinks = [...paymentLinks];
 
-      // Optimistic Update
       if (type === 'link') {
           setPaymentLinks(prev => prev.filter(item => item.id !== id));
       } else {
@@ -237,19 +301,15 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
           setPaymentLinks(prev => prev.filter(item => item.product_id !== id));
       }
 
-      // Database Operation with Verification
       try {
           if (type === 'link') {
-              // We use .select() to ensure the row was actually found and deleted
               const { error, data } = await supabase.from('payment_links').delete().eq('id', id).select();
               if (error) throw error;
               if (!data || data.length === 0) {
                   throw new Error("O item não foi apagado. Verifique se você tem permissão ou se ele já foi removido.");
               }
           } else {
-              // Delete dependencies first
               await supabase.from('payment_links').delete().eq('product_id', id);
-              
               const { error, data } = await supabase.from('products').delete().eq('id', id).select();
               if (error) throw error;
               if (!data || data.length === 0) {
@@ -259,11 +319,8 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
       } catch (error: any) {
           console.error("Delete failed:", error);
           alert(`Falha ao excluir: ${error.message}`);
-          
-          // Rollback State
           setProducts(previousProducts);
           setPaymentLinks(previousLinks);
-          // Refresh data to be sure
           fetchData();
       }
   };
@@ -291,7 +348,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
     setIsGeneratingAI(true);
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        const model = ai.models.getGenerativeModel({ model: "gemini-2.5-flash" });
         
         const prompt = `
           Atue como um especialista em Copywriting para produtos digitais.
@@ -301,13 +357,17 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
           Use gatilhos mentais e emojis. Não coloque aspas na resposta.
         `;
 
-        const result = await model.generateContent(prompt);
-        const text = result.response.text();
+        const result = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt
+        });
+        const text = result.text;
         
-        setNewProduct(p => ({ ...p, description: text.trim() }));
+        if (text) {
+          setNewProduct(p => ({ ...p, description: text.trim() }));
+        }
     } catch (e: any) {
         console.error(e);
-        // Fallback
         const descriptions = [
             `🚀 Domine ${newProduct.name} hoje mesmo! O guia definitivo para quem quer resultados reais em Moçambique.`,
             `💡 Transforme sua vida com ${newProduct.name}. Conteúdo prático, direto ao ponto e acessível. Compre agora!`
@@ -340,14 +400,12 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
         if (editingId) {
              const { data } = await supabase.from('products').update(payload).eq('id', editingId).select().single();
              savedData = data;
-             // Update UI immediately
              if (data) {
                  setProducts(prev => prev.map(p => p.id === editingId ? data : p));
              }
         } else {
              const { data } = await supabase.from('products').insert([payload]).select().single();
              savedData = data;
-             // Add to UI immediately
              if (data) {
                  setProducts(prev => [data, ...prev]);
              }
@@ -355,11 +413,9 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
 
         setShowProductModal(false);
         
-        // Simulate analysis process changing to active
         if (finalStatus === 'analyzing' && savedData) {
              setTimeout(async () => {
                  await supabase.from('products').update({ status: 'active' }).eq('id', savedData!.id);
-                 // Update local state
                  setProducts(prev => prev.map(p => p.id === savedData!.id ? { ...p, status: 'active' } : p));
              }, 3000);
         }
@@ -369,8 +425,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
         setIsSavingProduct(false);
     }
   };
-
-  // --- RENDER HELPERS ---
 
   const getStatusBadge = (status: ProductStatus) => {
       const styles = {
@@ -396,7 +450,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans text-slate-900">
       
-      {/* DELETE MODAL */}
       {deleteModal.isOpen && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
               <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl animate-scaleIn">
@@ -425,7 +478,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
           </div>
       )}
 
-      {/* Sidebar Desktop */}
       <aside className={`fixed lg:static inset-y-0 left-0 w-72 bg-white border-r border-slate-200 flex flex-col z-50 transition-transform duration-300 lg:transform-none ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-8 border-b border-slate-100">
           <div className="flex items-center gap-3">
@@ -446,6 +498,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
         <nav className="flex-1 p-6 space-y-2">
           {[
             { id: 'overview', icon: LayoutDashboard, label: 'Visão Geral' },
+            { id: 'sales', icon: TrendingUp, label: 'Vendas' },
             { id: 'products', icon: ShoppingBag, label: 'Meus Produtos' },
             { id: 'links', icon: LinkIcon, label: 'Links Criados' },
             { id: 'settings', icon: Settings, label: 'Configurações' },
@@ -477,7 +530,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
         </div>
       </aside>
       
-      {/* Mobile Header Overlay */}
       <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-white/90 backdrop-blur-md border-b border-slate-200 flex items-center justify-between px-4 z-40">
          <div className="flex items-center gap-2">
             <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center text-white">
@@ -490,39 +542,60 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
          </button>
       </div>
 
-      {/* Main Content */}
       <main className="flex-1 p-6 lg:p-10 mt-16 lg:mt-0 overflow-y-auto w-full max-w-7xl mx-auto">
         
-        {/* OVERVIEW */}
         {activeTab === 'overview' && (
           <div className="space-y-8 animate-fadeIn">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div>
-                <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Visão Geral</h1>
-                <p className="text-slate-500 mt-1">Bem-vindo de volta ao seu painel de controle.</p>
+                <h1 className="text-3xl font-bold text-slate-900 tracking-tight">
+                    {getGreeting()}, {profile.fullName.split(' ')[0]}
+                </h1>
+                <p className="text-slate-500 mt-1 flex items-center gap-2">
+                    <Calendar size={14} /> 
+                    {new Date().toLocaleDateString('pt-MZ', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                </p>
               </div>
               <button onClick={() => handleOpenNewProduct()} className="bg-brand-600 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-brand-700 shadow-lg shadow-brand-200 flex items-center gap-2 transition-transform hover:-translate-y-0.5">
                   <Plus size={18}/> Novo Produto
               </button>
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                {[
-                   { label: "Receita Total", value: "0 MT", icon: Wallet, color: "text-emerald-600", bg: "bg-emerald-50" },
-                   { label: "Vendas Realizadas", value: "0", icon: ShoppingBag, color: "text-blue-600", bg: "bg-blue-50" },
-                   { label: "Produtos Ativos", value: products.filter(p => p.status === 'active').length, icon: LayoutDashboard, color: "text-purple-600", bg: "bg-purple-50" }
+                   { 
+                       label: "Receita Bruta (Total)", 
+                       value: `${calculateGrossRevenue(sales).toLocaleString()} MT`, 
+                       icon: Wallet, 
+                       color: "text-emerald-600", 
+                       bg: "bg-emerald-50" 
+                   },
+                   { 
+                       label: "Vendas Aprovadas", 
+                       value: sales.filter(s => s.status === 'approved').length.toString(), 
+                       icon: ShoppingBag, 
+                       color: "text-blue-600", 
+                       bg: "bg-blue-50" 
+                   },
+                   { 
+                       label: "Produtos Ativos", 
+                       value: products.filter(p => p.status === 'active').length.toString(), 
+                       icon: LayoutDashboard, 
+                       color: "text-purple-600", 
+                       bg: "bg-purple-50" 
+                   },
+                   {
+                       label: "Vendas Hoje",
+                       value: sales.filter(s => new Date(s.created_at).toDateString() === new Date().toDateString()).length.toString(),
+                       icon: TrendingUp,
+                       color: "text-brand-600",
+                       bg: "bg-brand-50"
+                   }
                ].map((stat, i) => (
                    <div key={i} className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 hover:border-brand-200 transition-all hover:shadow-md group">
                      <div className="flex items-center justify-between mb-4">
                          <div className={`p-3 ${stat.bg} ${stat.color} rounded-xl group-hover:scale-110 transition-transform`}>
                              <stat.icon size={24}/>
-                         </div>
-                         {/* Placeholder graph */}
-                         <div className="flex gap-1 items-end h-8">
-                             <div className="w-1 bg-slate-100 h-3 rounded-full"></div>
-                             <div className="w-1 bg-slate-100 h-5 rounded-full"></div>
-                             <div className="w-1 bg-slate-200 h-4 rounded-full"></div>
-                             <div className="w-1 bg-brand-200 h-6 rounded-full"></div>
                          </div>
                      </div>
                      <div className="text-3xl font-bold text-slate-900 tracking-tight mb-1">{stat.value}</div>
@@ -530,10 +603,238 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                    </div>
                ))}
             </div>
+
+            {/* Charts Section (CSS Based) */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                
+                {/* Daily Revenue Chart */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <div className="flex items-center justify-between mb-6">
+                        <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                            <BarChart3 size={18} className="text-brand-600" /> Receita Diária (7 dias)
+                        </h3>
+                    </div>
+                    <div className="h-48 flex items-end justify-between gap-2">
+                        {[...Array(7)].map((_, i) => {
+                            const date = new Date();
+                            date.setDate(date.getDate() - (6 - i));
+                            const daySales = sales
+                                .filter(s => s.status === 'approved' && new Date(s.created_at).toDateString() === date.toDateString())
+                                .reduce((acc, curr) => acc + curr.amount, 0);
+                            
+                            // Mock max for visualization height
+                            const maxVal = Math.max(...[1000, ...sales.map(s => s.amount)]) * 5; 
+                            const height = Math.min((daySales / maxVal) * 100, 100);
+
+                            return (
+                                <div key={i} className="flex flex-col items-center gap-2 flex-1 group cursor-pointer">
+                                    <div className="w-full relative h-40 bg-slate-50 rounded-t-lg overflow-hidden flex items-end">
+                                        <div 
+                                            className="w-full bg-brand-500 hover:bg-brand-600 transition-all duration-500 rounded-t-lg relative" 
+                                            style={{ height: `${height > 5 ? height : 5}%` }}
+                                        >
+                                            <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
+                                                {daySales} MT
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <span className="text-[10px] text-slate-400 font-medium uppercase">{date.toLocaleDateString('pt-MZ', { weekday: 'short' })}</span>
+                                </div>
+                            )
+                        })}
+                    </div>
+                </div>
+
+                {/* Payment Methods Chart */}
+                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                     <div className="flex items-center justify-between mb-6">
+                        <h3 className="font-bold text-slate-800 flex items-center gap-2">
+                            <PieChart size={18} className="text-brand-600" /> Métodos de Pagamento
+                        </h3>
+                    </div>
+                    <div className="flex items-center justify-center h-48 gap-8">
+                        <div className="relative w-32 h-32 rounded-full border-8 border-slate-100 flex items-center justify-center overflow-hidden">
+                             {/* Mock Pie Chart Visualization */}
+                             <div className="absolute inset-0 bg-red-500" style={{ clipPath: 'polygon(50% 50%, 0 0, 100% 0, 100% 100%, 0 100%)' }}></div>
+                             <div className="absolute inset-0 bg-orange-500" style={{ clipPath: 'polygon(50% 50%, 0 0, 0 100%)' }}></div>
+                             <div className="z-10 bg-white w-20 h-20 rounded-full flex flex-col items-center justify-center shadow-inner">
+                                <span className="text-xs font-bold text-slate-400">Total</span>
+                                <span className="font-bold text-slate-800">{sales.length}</span>
+                             </div>
+                        </div>
+                        <div className="space-y-3">
+                            <div className="flex items-center gap-2">
+                                <div className="w-3 h-3 rounded-full bg-red-500"></div>
+                                <span className="text-sm font-medium text-slate-600">M-Pesa ({sales.filter(s => s.payment_method === 'mpesa').length})</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <div className="w-3 h-3 rounded-full bg-orange-500"></div>
+                                <span className="text-sm font-medium text-slate-600">e-Mola ({sales.filter(s => s.payment_method === 'emola').length})</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Recent Sales Table */}
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                    <h3 className="font-bold text-slate-800 text-lg">Últimas Vendas</h3>
+                    <button onClick={() => changeTab('sales')} className="text-sm text-brand-600 font-bold hover:underline">Ver todas</button>
+                </div>
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                        <thead>
+                            <tr className="bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wide">
+                                <th className="p-4">ID Venda</th>
+                                <th className="p-4">Cliente</th>
+                                <th className="p-4">Produto</th>
+                                <th className="p-4">Valor</th>
+                                <th className="p-4">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody className="text-sm">
+                            {sales.length === 0 ? (
+                                <tr><td colSpan={5} className="p-8 text-center text-slate-400">Nenhuma venda registrada ainda.</td></tr>
+                            ) : (
+                                sales.slice(0, 5).map(sale => (
+                                    <tr key={sale.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                                        <td className="p-4 font-mono text-slate-400 text-xs">#{sale.id.slice(0, 8)}</td>
+                                        <td className="p-4">
+                                            <div className="font-bold text-slate-800">{sale.customer_name}</div>
+                                            <div className="text-xs text-slate-400">{sale.customer_email}</div>
+                                        </td>
+                                        <td className="p-4 text-slate-600">{sale.product_name}</td>
+                                        <td className="p-4 font-bold text-slate-900">{sale.amount.toLocaleString()} MT</td>
+                                        <td className="p-4">
+                                            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${sale.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+                                                {sale.status === 'approved' ? 'Aprovado' : sale.status}
+                                            </span>
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
           </div>
         )}
 
-        {/* PRODUCTS MANAGEMENT (MODERN CARDS) */}
+        {activeTab === 'sales' && (
+            <div className="space-y-8 animate-fadeIn">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div>
+                    <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Vendas</h1>
+                    <p className="text-slate-500 mt-1">Gerencie suas transações e acompanhe seu faturamento.</p>
+                  </div>
+                  <div className="flex gap-2">
+                       <button className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-600 flex items-center gap-2 hover:bg-slate-50">
+                           <Calendar size={16}/> Filtrar Data
+                       </button>
+                       <button className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-bold text-slate-600 flex items-center gap-2 hover:bg-slate-50">
+                           <Filter size={16}/> Status
+                       </button>
+                  </div>
+                </div>
+
+                {/* Sales Metrics */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                     <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                         <div className="text-xs font-bold text-slate-400 uppercase mb-2">Vendas Aprovadas</div>
+                         <div className="text-2xl font-bold text-green-600">{sales.filter(s => s.status === 'approved').length}</div>
+                     </div>
+                     <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                         <div className="text-xs font-bold text-slate-400 uppercase mb-2">Taxa de Conversão</div>
+                         <div className="text-2xl font-bold text-slate-900">
+                             {(() => {
+                                 const totalViews = products.reduce((acc, p) => acc + (p.views_count || 0), 0);
+                                 const totalSales = sales.filter(s => s.status === 'approved').length;
+                                 return totalViews > 0 ? ((totalSales / totalViews) * 100).toFixed(1) : '0';
+                             })()}%
+                         </div>
+                         <div className="text-[10px] text-slate-400 mt-1">Baseado em visualizações de produtos</div>
+                     </div>
+                     <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                         <div className="text-xs font-bold text-slate-400 uppercase mb-2">Receita Bruta</div>
+                         <div className="text-2xl font-bold text-slate-900">{calculateGrossRevenue(sales).toLocaleString()} MT</div>
+                     </div>
+                     <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                         <div className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-1">Receita Líquida <AlertCircle size={12} title="Descontando taxas da plataforma" /></div>
+                         <div className="text-2xl font-bold text-brand-600">{calculateNetRevenue(sales).toLocaleString()} MT</div>
+                     </div>
+                </div>
+
+                {/* Sales Tabs Status */}
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="border-b border-slate-100 p-2 flex gap-2 overflow-x-auto">
+                        {['Todas', 'Aprovadas', 'Pendentes', 'Canceladas'].map(status => (
+                            <button key={status} className="px-4 py-2 rounded-lg text-sm font-bold text-slate-600 hover:bg-slate-50 focus:bg-slate-100 focus:text-brand-600 transition-colors">
+                                {status}
+                            </button>
+                        ))}
+                    </div>
+
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                            <thead>
+                                <tr className="bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wide">
+                                    <th className="p-4">ID</th>
+                                    <th className="p-4">Cliente</th>
+                                    <th className="p-4">Contato</th>
+                                    <th className="p-4">Produto</th>
+                                    <th className="p-4">Preço</th>
+                                    <th className="p-4">Taxa</th>
+                                    <th className="p-4">Líquido</th>
+                                    <th className="p-4">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody className="text-sm">
+                                {sales.length === 0 ? (
+                                    <tr><td colSpan={8} className="p-12 text-center text-slate-400">Nenhuma venda encontrada com os filtros atuais.</td></tr>
+                                ) : (
+                                    sales.map(sale => (
+                                        <tr key={sale.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors group">
+                                            <td className="p-4 font-mono text-slate-400 text-xs">#{sale.id.slice(0, 8)}</td>
+                                            <td className="p-4">
+                                                <div className="font-bold text-slate-800">{sale.customer_name}</div>
+                                                <div className="text-xs text-slate-400">{sale.customer_email}</div>
+                                            </td>
+                                            <td className="p-4">
+                                                <div className="flex items-center gap-1 text-slate-600">
+                                                    <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" className="w-4 h-4" alt=""/>
+                                                    {sale.customer_phone}
+                                                </div>
+                                            </td>
+                                            <td className="p-4 text-slate-600">{sale.product_name}</td>
+                                            <td className="p-4 font-bold text-slate-900">{sale.amount.toLocaleString()} MT</td>
+                                            <td className="p-4 text-red-400 text-xs font-medium">-{((sale.amount * 0.049) + 5).toFixed(2)} MT</td>
+                                            <td className="p-4 font-bold text-green-600">{(sale.amount - ((sale.amount * 0.049) + 5)).toLocaleString()} MT</td>
+                                            <td className="p-4">
+                                                <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                                                    sale.status === 'approved' ? 'bg-green-100 text-green-700' : 
+                                                    sale.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                                                    'bg-red-100 text-red-700'
+                                                }`}>
+                                                    {sale.status === 'approved' ? 'Aprovado' : sale.status === 'pending' ? 'Pendente' : 'Cancelado'}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    {sales.length > 0 && (
+                        <div className="p-4 border-t border-slate-100 text-center">
+                            <button className="text-sm text-slate-500 font-medium hover:text-brand-600 transition-colors">Carregar mais vendas...</button>
+                        </div>
+                    )}
+                </div>
+            </div>
+        )}
+
         {activeTab === 'products' && (
           <div className="space-y-8 animate-fadeIn">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 border-b border-slate-100 pb-6">
@@ -563,7 +864,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                   {products.map((product) => (
                       <div key={product.id} className="bg-white rounded-2xl p-5 shadow-sm hover:shadow-lg border border-slate-100 hover:border-brand-200 transition-all duration-300 flex flex-col group relative overflow-hidden">
                           
-                          {/* Card Header & Image */}
                           <div className="flex gap-4 mb-4">
                               <div className="w-20 h-20 rounded-xl bg-slate-100 border border-slate-200 overflow-hidden flex-shrink-0 relative">
                                   {product.image_url ? (
@@ -575,7 +875,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                               <div className="flex-1 min-w-0">
                                   <div className="flex justify-between items-start">
                                      <h3 className="font-bold text-slate-900 text-lg truncate pr-2 leading-tight">{product.name}</h3>
-                                     {/* Status Badge */}
                                      <div className="flex-shrink-0">{getStatusBadge(product.status)}</div>
                                   </div>
                                   <p className="text-xs text-slate-500 mt-1 capitalize">{product.category}</p>
@@ -583,19 +882,17 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                               </div>
                           </div>
 
-                          {/* Stats Divider */}
                           <div className="grid grid-cols-2 gap-2 border-t border-b border-slate-50 py-3 mb-4">
                               <div className="text-center border-r border-slate-50">
                                   <div className="text-xs text-slate-400 font-medium uppercase tracking-wide">Vendas</div>
-                                  <div className="font-bold text-slate-800">{product.sales_count}</div>
+                                  <div className="font-bold text-slate-800">{product.sales_count || 0}</div>
                               </div>
                               <div className="text-center">
-                                  <div className="text-xs text-slate-400 font-medium uppercase tracking-wide">Cliques</div>
-                                  <div className="font-bold text-slate-800">{product.views_count || 0}</div>
+                                  <div className="text-xs text-slate-400 font-medium uppercase tracking-wide">Receita</div>
+                                  <div className="font-bold text-slate-800">{(product.total_revenue || 0).toLocaleString()}</div>
                               </div>
                           </div>
 
-                          {/* Actions Footer */}
                           <div className="mt-auto grid grid-cols-2 gap-2">
                               <button 
                                 onClick={() => handleEditProduct(product)}
@@ -609,7 +906,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                               >
                                   <Trash2 size={14}/> Excluir
                               </button>
-                              {/* Link Button Removed as requested */}
                           </div>
                       </div>
                   ))}
@@ -618,7 +914,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
           </div>
         )}
 
-        {/* PAYMENT LINKS */}
         {activeTab === 'links' && (
            <div className="space-y-8 animate-fadeIn">
                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-6">
@@ -628,7 +923,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                   </div>
                </div>
 
-               {/* Generator Card */}
                <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
                    <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2"><Sparkles size={18} className="text-brand-500"/> Criar Novo Link Rápido</h3>
                    <div className="flex flex-col md:flex-row gap-3 items-end bg-slate-50 p-4 rounded-xl border border-slate-100">
@@ -659,7 +953,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                    </div>
                </div>
 
-               {/* Links List */}
                <div className="space-y-4">
                    {paymentLinks.length === 0 ? (
                        <div className="p-16 text-center text-slate-400 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
@@ -691,11 +984,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                                    </div>
 
                                    <div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-end border-t md:border-t-0 border-slate-50 pt-4 md:pt-0">
-                                       <div className="text-center px-4">
-                                           <div className="text-2xl font-bold text-slate-800">{link.clicks || 0}</div>
-                                           <div className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Cliques</div>
-                                       </div>
-                                       
                                        <div className="flex items-center gap-2">
                                             <a 
                                                 href={link.url} 
@@ -722,7 +1010,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
            </div>
         )}
 
-        {/* SETTINGS TAB */}
         {activeTab === 'settings' && (
            <div className="animate-fadeIn p-16 bg-white rounded-2xl border border-slate-200 max-w-2xl mx-auto text-center shadow-sm">
                <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-6">
@@ -736,7 +1023,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
 
       </main>
 
-      {/* --- PRODUCT MODAL --- */}
       {showProductModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-fadeIn">
           <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col overflow-hidden max-h-[90vh] animate-slideUp">

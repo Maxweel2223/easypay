@@ -125,7 +125,7 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
           sendSMS(ADMIN_NUM, msgAdmin)
       ]);
 
-      // 2. Enviar Email (Resend) - Usando a classe Resend
+      // 2. Enviar Email (Resend) - EXATAMENTE COMO SOLICITADO
       const sendEmailViaResend = async () => {
         try {
             const resend = new Resend(RESEND_API_KEY);

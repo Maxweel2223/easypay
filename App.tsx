@@ -16,6 +16,15 @@ import { Session } from '@supabase/supabase-js';
 
 export type ViewState = 'landing' | 'login' | 'register' | 'dashboard' | 'checkout';
 
+// Helper for safe history manipulation
+const safePushState = (path: string) => {
+  try {
+    window.history.pushState({}, '', path);
+  } catch (e) {
+    // Silently fail in restricted environments (e.g. sandboxed iframes)
+  }
+};
+
 const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>('landing');
   const [session, setSession] = useState<Session | null>(null);
@@ -27,49 +36,20 @@ const App: React.FC = () => {
 
     const handleRouting = async () => {
         const path = window.location.pathname;
+        const searchParams = new URLSearchParams(window.location.search);
+        
         let isCheckout = false;
         
         // 1. Check for Payment Link with robust parsing
-        // Handles /p/ID, /p/ID/, /p/ID?ref=...
         if (path.startsWith('/p/')) {
            const rawId = path.split('/p/')[1];
            if (rawId) {
-             // Clean ID: remove trailing slashes and query parameters
              const cleanId = rawId.split('/')[0].split('?')[0];
              
              if (cleanId) {
                setCheckoutProductId(cleanId);
                setCurrentView('checkout');
                isCheckout = true;
-
-               // --- CLICK TRACKING LOGIC ---
-               // Check if we already tracked this link in this session to prevent spamming
-               const sessionKey = `tracked_view_${cleanId}`;
-               if (!sessionStorage.getItem(sessionKey)) {
-                   try {
-                       // Find links associated with this product and increment clicks
-                       const { data: links } = await supabase
-                           .from('payment_links')
-                           .select('id, clicks')
-                           .eq('product_id', cleanId);
-                       
-                       if (links && links.length > 0) {
-                           // Increment stats for all links generated for this product (since URL structure is product-based)
-                           // Or specific link if we had the Link ID in URL.
-                           for (const link of links) {
-                               await supabase
-                                   .from('payment_links')
-                                   .update({ clicks: (link.clicks || 0) + 1 })
-                                   .eq('id', link.id);
-                           }
-                           console.log("Link click tracked");
-                       }
-                       sessionStorage.setItem(sessionKey, 'true');
-                   } catch (e) {
-                       console.warn("Failed to track click", e);
-                   }
-               }
-               // -----------------------------
              }
            }
         }
@@ -87,7 +67,7 @@ const App: React.FC = () => {
                     setCurrentView('dashboard');
                 } else if (path === '/login' || path === '/register') {
                     // Redirect logged user trying to access login to dashboard
-                    window.history.pushState({}, '', '/dashboard');
+                    safePushState('/dashboard');
                     setCurrentView('dashboard');
                 } else {
                      // Default logged in view could be dashboard or landing
@@ -98,7 +78,7 @@ const App: React.FC = () => {
                 else if (path === '/register') setCurrentView('register');
                 else if (path.startsWith('/dashboard')) {
                     // Protect dashboard
-                    window.history.pushState({}, '', '/login');
+                    safePushState('/login');
                     setCurrentView('login');
                 } else {
                     setCurrentView('landing');
@@ -120,21 +100,20 @@ const App: React.FC = () => {
 
       if (session) {
          if (currentView === 'login' || currentView === 'register') {
-             window.history.pushState({}, '', '/dashboard');
+             safePushState('/dashboard');
              setCurrentView('dashboard');
          }
       } else {
         if (currentView === 'dashboard' || path.startsWith('/dashboard')) {
-          window.history.pushState({}, '', '/');
+          safePushState('/');
           setCurrentView('landing');
         }
       }
     });
 
     return () => subscription.unsubscribe();
-  }, [currentView]); // Re-run if view changes manually to update URL
+  }, [currentView]);
 
-  // --- Realtime Remote Logout Logic ---
   useEffect(() => {
     if (!session) return;
     const channel = supabase.channel('global_logout')
@@ -145,7 +124,7 @@ const App: React.FC = () => {
            try {
              myDeviceId = localStorage.getItem('payeasy_device_id');
            } catch (e) {
-             console.warn('Storage access restricted');
+             // Silently ignore storage access errors
            }
 
            if (payload.old.id === myDeviceId) {
@@ -167,19 +146,18 @@ const App: React.FC = () => {
   const navigate = (view: ViewState) => {
     window.scrollTo(0, 0);
     
-    // Update URL without reload
     let path = '/';
     if (view === 'login') path = '/login';
     if (view === 'register') path = '/register';
     if (view === 'dashboard') path = '/dashboard';
     
-    window.history.pushState({}, '', path);
+    safePushState(path);
     setCurrentView(view);
   };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    window.history.pushState({}, '', '/');
+    safePushState('/');
     setCurrentView('landing');
   };
 

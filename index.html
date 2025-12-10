@@ -7,6 +7,9 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <script>
+      // Polyfill for Node.js process.env to support Resend SDK client-side
+      window.process = { env: { NODE_ENV: 'production' } };
+      
       tailwind.config = {
         theme: {
           extend: {
