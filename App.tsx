@@ -112,10 +112,18 @@ const App: React.FC = () => {
       .on('postgres_changes', 
         { event: 'DELETE', schema: 'public', table: 'user_devices' }, 
         async (payload) => {
-           const myDeviceId = localStorage.getItem('payeasy_device_id');
+           let myDeviceId = null;
+           try {
+             myDeviceId = localStorage.getItem('payeasy_device_id');
+           } catch (e) {
+             console.warn('Storage access restricted');
+           }
+
            if (payload.old.id === myDeviceId) {
              await supabase.auth.signOut();
-             localStorage.removeItem('payeasy_device_id');
+             try {
+               localStorage.removeItem('payeasy_device_id');
+             } catch (e) {}
              alert('Sua sessão foi encerrada remotamente.');
              window.location.reload(); 
            }

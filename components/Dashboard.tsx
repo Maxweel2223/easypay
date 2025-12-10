@@ -683,7 +683,13 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                                            <span className="bg-brand-50 text-brand-700 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide">Produto</span>
                                            <h4 className="font-bold text-slate-900">{link.product_name}</h4>
                                        </div>
-                                       <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100 w-full max-w-xl group cursor-pointer" onClick={() => {navigator.clipboard.writeText(link.url); alert("Link copiado!")}}>
+                                       <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100 w-full max-w-xl group cursor-pointer" onClick={() => {
+                                           try {
+                                               navigator.clipboard.writeText(link.url).then(() => alert("Link copiado!")).catch((e) => alert("Erro ao copiar. Tente selecionar e copiar manualmente."));
+                                           } catch(e) {
+                                               alert("Erro de segurança ao copiar. Selecione o texto manualmente.");
+                                           }
+                                       }}>
                                            <div className="bg-white p-1 rounded border border-slate-200 text-slate-400"><LinkIcon size={12}/></div>
                                            <code className="text-xs text-brand-600 truncate flex-1 font-mono">{link.url}</code>
                                            <Copy size={14} className="text-slate-400 group-hover:text-brand-600"/>
