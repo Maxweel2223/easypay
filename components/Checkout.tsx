@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, ShieldCheck, CheckCircle2, Zap, Smartphone, Lock, User, Mail, AlertTriangle, Check, CreditCard, Loader2, XCircle } from 'lucide-react';
+import { Clock, ShieldCheck, CheckCircle2, Zap, Smartphone, Lock, User, Mail, AlertTriangle, Check, CreditCard, Loader2, XCircle, Phone } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 
 const mpesaLogo = "https://play-lh.googleusercontent.com/BeFHX9dTKeuLrF8TA0gr9kfXLGicQtnxoTM8xJThn9EKCl-h5JmJoqFkaPBoo4qi7w";
@@ -21,7 +21,8 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
   // Form State
   const [formData, setFormData] = useState({
     fullName: '',
-    whatsapp: '', // Stores phone number for API and Contact
+    whatsapp: '',      // Para contato/entrega
+    paymentPhone: '',  // Para o pagamento M-Pesa/Emola
     email: ''
   });
 
@@ -36,6 +37,9 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
   const GIBRA_API_KEY = "afec688b6241cb5af687496eee6b7e919d4acafa9c2dafef2321185fe95e795280c645422557ae9c8b44eff1736503936379123aecf9a9ee9f8777215ae430b9";
   const GIBRA_WALLET_ID = "1bcc050c-fca2-4296-821d-30134d9a333c";
 
+  // Configuration Resend
+  const RESEND_API_KEY = "re_PCb2nphE_JQqrsWFyph7eq1DHPToF3Ptm";
+
   // 1. Fetch Product and Increment Click Counter
   useEffect(() => {
     const fetchProduct = async () => {
@@ -43,8 +47,6 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
       setErrorProduct(false);
       
       try {
-          // NOTE: Ensure your Supabase RLS policies allow 'public' read access to 'products'.
-          // If RLS is set to 'authenticated' only, this will return null for non-logged users.
           const { data, error } = await supabase.from('products').select('*').eq('id', productId).maybeSingle();
           
           if (error) {
@@ -55,7 +57,6 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
              setErrorProduct(true);
           } else {
             setProduct(data);
-            // Increment View/Click Counter safely
             if (data.id) {
                  await supabase.from('products').update({ views_count: (data.views_count || 0) + 1 }).eq('id', data.id).select();
             }
@@ -64,7 +65,6 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
           console.error("Unexpected error:", err);
           setErrorProduct(true);
       } finally {
-          // ENSURE loading is false regardless of outcome
           setLoading(false);
       }
     };
@@ -96,70 +96,105 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
   };
 
   // --- NOTIFICATION SYSTEM ---
-  const sendPurchaseNotifications = async (clientName: string, clientPhone: string, productName: string, amount: number, accessLink: string) => {
-      // Configurações API SMS (Reutilizando do Register.tsx)
+  const sendPurchaseNotifications = async (clientName: string, clientWhatsApp: string, productName: string, amount: number, accessLink: string) => {
+      // 1. Enviar SMS (Yezosms)
       const SMS_USER = "colddimas1@gmail.com";
       const SMS_PASS = "f87766ab5b8ff18287a2b66747193ac9fd53ad3f";
       const ADMIN_NUM = "857789345";
 
-      // 1. Mensagem para o Cliente
-      const msgClient = `PayEasy: Ola ${clientName}, pagamento de ${amount}MT confirmado! Seu acesso ao ${productName} esta aqui: ${accessLink}`;
-      
-      // 2. Mensagem para o Admin (Dono da plataforma/vendedor)
-      const msgAdmin = `Venda Aprovada! ${clientName} (84/85...) pagou ${amount}MT por ${productName}.`;
+      // Mensagem para o Cliente
+      const msgClient = `PayEasy: Ola ${clientName}, pagamento confirmado! Ref: ${transactionId}. Acesse seu produto aqui: ${accessLink}`;
+      // Mensagem para o Admin
+      const msgAdmin = `Venda PayEasy! Ref: ${transactionId}. ${clientName} pagou ${amount}MT via GibraPay.`;
 
       const sendSMS = async (to: string, msg: string) => {
-          // Limpa o número para garantir formato 258...
           let cleanTo = to.replace(/\D/g, '');
           if (cleanTo.startsWith('8')) cleanTo = '258' + cleanTo;
           
           const url = `https://app.yezosms.com/api?username=${SMS_USER}&password=${SMS_PASS}&message=${encodeURIComponent(msg)}&to=${cleanTo}&from=INFOMSG&messageid=${Date.now()}`;
           try { 
              await fetch(url, { mode: 'no-cors' }); 
-             console.log("SMS enviado para", cleanTo);
           } catch (e) { 
              console.error("Erro ao enviar SMS", e); 
           }
       };
 
-      // Dispara SMS em paralelo
       await Promise.all([
-          sendSMS(clientPhone, msgClient),
+          sendSMS(clientWhatsApp, msgClient),
           sendSMS(ADMIN_NUM, msgAdmin)
       ]);
 
-      // 3. Simulação de Email (Placeholder para EmailJS ou Backend)
-      if (formData.email) {
-          console.log(`[EMAIL SYSTEM] Enviando email para ${formData.email}...`);
-          console.log(`Assunto: Compra Aprovada - ${productName}`);
-          console.log(`Corpo: Olá ${clientName}, sua compra de ${amount}MT foi confirmada.`);
-          // Aqui entraria a chamada para emailjs.send(...)
-      }
+      // 2. Enviar Email (Resend)
+      const sendEmailViaResend = async () => {
+        try {
+            // HTML do Email
+            const emailHtml = `
+              <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #0891b2;">Pagamento Confirmado!</h2>
+                <p>Olá <strong>${clientName}</strong>,</p>
+                <p>Sua compra de <strong>${productName}</strong> foi aprovada com sucesso.</p>
+                <div style="background: #f0fdfa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                  <p style="margin: 5px 0;"><strong>ID da Transação:</strong> ${transactionId}</p>
+                  <p style="margin: 5px 0;"><strong>Valor Pago:</strong> ${amount.toLocaleString()} MT</p>
+                </div>
+                <p>Você pode acessar seu produto clicando no botão abaixo:</p>
+                <a href="${accessLink}" style="display: inline-block; background: #0891b2; color: white; padding: 12px 24px; text-decoration: none; border-radius: 5px; font-weight: bold;">Acessar Agora</a>
+                <p style="font-size: 12px; color: #666; margin-top: 30px;">Se o botão não funcionar, copie este link: ${accessLink}</p>
+              </div>
+            `;
+
+            // Lista de destinatários (Admin + Cliente se forneceu email)
+            const recipients = ['developermax2maker@gmail.com'];
+            if (formData.email) recipients.push(formData.email);
+
+            await fetch('https://api.resend.com/emails', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${RESEND_API_KEY}`
+                },
+                body: JSON.stringify({
+                    from: 'PayEasy <onboarding@resend.dev>', // Domínio de teste obrigatório
+                    to: recipients,
+                    subject: `Venda Aprovada! - ${productName} (Ref: ${transactionId})`,
+                    html: emailHtml
+                })
+            });
+            console.log("Email Resend enviado com sucesso.");
+        } catch (error) {
+            console.error("Erro ao enviar email Resend:", error);
+        }
+      };
+
+      // Executa o envio de email sem bloquear o fluxo principal
+      sendEmailViaResend();
   };
 
   const handlePayment = async () => {
       setPaymentError(null);
 
-      if (!formData.fullName || !formData.whatsapp) {
-          alert("Por favor, preencha seu nome e número de telefone.");
+      // Validação Básica
+      if (!formData.fullName || !formData.whatsapp || !formData.paymentPhone) {
+          alert("Por favor, preencha seu nome, WhatsApp e número de pagamento.");
           return;
       }
 
-      const cleanPhone = formData.whatsapp.replace(/\D/g, '');
+      const cleanPaymentPhone = formData.paymentPhone.replace(/\D/g, '');
+      const cleanWhatsApp = formData.whatsapp.replace(/\D/g, '');
       
-      // Validation Logic for Prefixes
-      if (cleanPhone.length < 9) {
-          alert("Número de telefone inválido (mínimo 9 dígitos).");
+      // Validação de Prefixos
+      if (cleanPaymentPhone.length < 9) {
+          alert("Número de pagamento inválido.");
           return;
       }
 
       if (paymentMethod === 'mpesa') {
-          if (!cleanPhone.startsWith('84') && !cleanPhone.startsWith('85')) {
+          if (!cleanPaymentPhone.startsWith('84') && !cleanPaymentPhone.startsWith('85')) {
               setPaymentError("Para M-Pesa, o número deve começar com 84 ou 85.");
               return;
           }
       } else if (paymentMethod === 'emola') {
-          if (!cleanPhone.startsWith('86') && !cleanPhone.startsWith('87')) {
+          if (!cleanPaymentPhone.startsWith('86') && !cleanPaymentPhone.startsWith('87')) {
               setPaymentError("Para e-Mola, o número deve começar com 86 ou 87.");
               return;
           }
@@ -173,7 +208,7 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
           const payload = {
               wallet_id: GIBRA_WALLET_ID,
               amount: totalAmount,
-              number_phone: cleanPhone
+              number_phone: cleanPaymentPhone // Número para cobrança
           };
 
           console.log("Processing payment...", payload);
@@ -190,12 +225,11 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
           let result;
           try {
              result = await response.json();
-             console.log("GibraPay Response:", result);
           } catch (e) {
              throw new Error("Erro de comunicação com o servidor de pagamento.");
           }
 
-          // Strict Security Checks
+          // Verificações de Segurança e Erro
           const isStatusError = result.status === 'error';
           const isTransactionDeclined = result.callback?.transaction_status === 'Declined';
           const isStatusPending = result.status === 'Pending';
@@ -214,30 +248,29 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
                throw new Error("Pagamento pendente. Por favor, aguarde a confirmação no seu celular e tente novamente.");
           }
 
-          // SUCCESS
+          // SUCESSO
           setPaymentSuccess(true);
           playSuccessSound();
 
-          // Send Notifications (SMS/Email)
+          // Enviar Notificações (SMS e Email)
           await sendPurchaseNotifications(
               formData.fullName,
-              cleanPhone,
+              cleanWhatsApp, // Envia para o WhatsApp de contato, não o de pagamento
               product.name,
               totalAmount,
-              product.redemption_link || 'Link indisponível'
+              product.redemption_link || window.location.href // Fallback
           );
 
-          // Redirect
+          // Redirecionamento Automático
           setTimeout(() => {
              if (product.redemption_link) {
                  let url = product.redemption_link;
                  if (!url.startsWith('http')) url = 'https://' + url;
                  window.location.href = url;
              } else {
-                 alert("Pagamento confirmado! Contate o suporte para receber seu produto.");
                  setIsProcessing(false);
              }
-          }, 4000);
+          }, 5000); // 5 segundos para ler a mensagem de sucesso
 
       } catch (error: any) {
           console.error("Payment Error:", error);
@@ -275,15 +308,22 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
       {/* SUCCESS POPUP */}
       {paymentSuccess && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/90 backdrop-blur-md animate-fadeIn p-4">
-              <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl transform scale-100 animate-bounce-slow border-4 border-green-100">
+              <div className="bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-2xl transform scale-100 animate-bounce-slow border-4 border-green-100 relative overflow-hidden">
+                  <div className="absolute top-0 left-0 w-full h-2 bg-green-500"></div>
                   <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner">
                       <CheckCircle2 size={56} className="text-green-600 animate-pulse"/>
                   </div>
                   <h2 className="text-2xl font-bold text-slate-900 mb-2">Pagamento Confirmado!</h2>
-                  <p className="text-slate-500 mb-8 leading-relaxed">Transação aprovada. Enviamos os dados de acesso para seu SMS e Email.</p>
+                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-100 mb-4 inline-block">
+                     <p className="text-xs text-slate-400 uppercase tracking-wide">ID da Transação</p>
+                     <p className="text-sm font-mono font-bold text-slate-700 select-all">{transactionId}</p>
+                  </div>
+                  <p className="text-slate-500 mb-8 leading-relaxed text-sm">
+                      Enviamos os dados de acesso para seu <strong>WhatsApp e Email</strong>. Você será redirecionado em instantes...
+                  </p>
                   
                   <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                      <div className="h-full bg-green-500 animate-[width_4s_linear_forwards]" style={{width: '0%'}}></div>
+                      <div className="h-full bg-green-500 animate-[width_5s_linear_forwards]" style={{width: '0%'}}></div>
                   </div>
               </div>
           </div>
@@ -375,7 +415,7 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
                     </div>
 
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 ml-1">Email <span className="text-slate-300 font-normal lowercase">(opcional)</span></label>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 ml-1">Email <span className="text-slate-300 font-normal lowercase">(Opcional)</span></label>
                         <div className="relative group">
                             <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-brand-600 transition-colors" size={20} />
                             <input 
@@ -383,28 +423,25 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
                                 value={formData.email}
                                 onChange={e => setFormData({...formData, email: e.target.value})}
                                 className="w-full pl-12 p-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-500 outline-none transition-all font-medium text-slate-800 placeholder-slate-400"
-                                placeholder="Para receber o acesso por email"
+                                placeholder="Para receber o comprovativo"
                             />
                         </div>
                     </div>
 
                     <div>
-                        {/* Dynamic Label based on Method */}
-                        <label className={`block text-xs font-bold uppercase mb-1.5 ml-1 transition-colors ${isMpesa ? 'text-red-500' : 'text-orange-500'}`}>
-                           {isMpesa ? "Celular (WhatsApp / M-Pesa)" : "Celular (WhatsApp / e-Mola)"}
-                        </label>
+                        <label className="block text-xs font-bold text-slate-500 uppercase mb-1.5 ml-1">WhatsApp para Entrega</label>
                         <div className="relative group">
-                            <Smartphone className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${isMpesa ? 'text-red-400' : 'text-orange-400'}`} size={20} />
+                            <Smartphone className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-green-500 transition-colors" size={20} />
                             <input 
                                 type="tel"
                                 value={formData.whatsapp}
                                 onChange={e => setFormData({...formData, whatsapp: e.target.value})}
-                                className={`w-full pl-12 p-4 bg-slate-50 border rounded-xl focus:ring-2 outline-none transition-all font-medium text-slate-800 placeholder-slate-400 ${isMpesa ? 'focus:ring-red-500 focus:border-red-500' : 'focus:ring-orange-500 focus:border-orange-500'}`}
-                                placeholder={isMpesa ? "84 123 4567" : "86 123 4567"}
+                                className="w-full pl-12 p-4 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-green-500 outline-none transition-all font-medium text-slate-800 placeholder-slate-400"
+                                placeholder="84 123 4567"
                             />
                         </div>
                         <p className="text-[10px] text-slate-400 mt-2 ml-1 flex items-center gap-1">
-                            <Check size={10} /> Enviaremos o acesso para este WhatsApp e número de pagamento.
+                            <Check size={10} /> Enviaremos o link de acesso para este número.
                         </p>
                     </div>
                 </div>
@@ -462,6 +499,26 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
                         {paymentMethod === 'emola' && <div className="absolute top-3 right-3 w-2.5 h-2.5 rounded-full bg-orange-500 animate-pulse"></div>}
                         <span className={`text-xs font-bold ${paymentMethod === 'emola' ? 'text-orange-600' : 'text-slate-400'}`}>e-Mola</span>
                     </button>
+                </div>
+
+                {/* Specific Payment Number Input */}
+                <div className="mb-8">
+                     <label className={`block text-xs font-bold uppercase mb-1.5 ml-1 transition-colors ${isMpesa ? 'text-red-500' : 'text-orange-500'}`}>
+                           {isMpesa ? "Número M-Pesa (Pagamento)" : "Número e-Mola (Pagamento)"}
+                     </label>
+                     <div className="relative group">
+                         <Phone className={`absolute left-4 top-1/2 -translate-y-1/2 transition-colors ${isMpesa ? 'text-red-400' : 'text-orange-400'}`} size={20} />
+                         <input 
+                             type="tel"
+                             value={formData.paymentPhone}
+                             onChange={e => setFormData({...formData, paymentPhone: e.target.value})}
+                             className={`w-full pl-12 p-4 bg-slate-50 border rounded-xl focus:ring-2 outline-none transition-all font-medium text-slate-800 placeholder-slate-400 ${isMpesa ? 'focus:ring-red-500 focus:border-red-500' : 'focus:ring-orange-500 focus:border-orange-500'}`}
+                             placeholder={isMpesa ? "84 123 4567" : "86 123 4567"}
+                         />
+                     </div>
+                     <p className="text-[10px] text-slate-400 mt-2 ml-1">
+                        A notificação de pagamento chegará neste número.
+                     </p>
                 </div>
 
                 <div className="bg-slate-50 rounded-2xl p-5 border border-slate-200 mb-8 space-y-3">
