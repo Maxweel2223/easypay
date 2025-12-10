@@ -20,51 +20,89 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<ViewState>('landing');
   const [session, setSession] = useState<Session | null>(null);
   const [checkoutProductId, setCheckoutProductId] = useState<string | null>(null);
+  const [initialDashboardTab, setInitialDashboardTab] = useState<string>('overview');
 
   useEffect(() => {
     document.documentElement.classList.remove('dark');
 
-    // 1. Check for Payment Link URL first
-    const path = window.location.pathname;
-    let isCheckout = false;
+    const handleRouting = async () => {
+        const path = window.location.pathname;
+        let isCheckout = false;
+        
+        // 1. Check for Payment Link
+        if (path.startsWith('/p/')) {
+           const productId = path.split('/p/')[1];
+           if (productId) {
+             setCheckoutProductId(productId);
+             setCurrentView('checkout');
+             isCheckout = true;
+           }
+        }
 
-    if (path.startsWith('/p/')) {
-       const productId = path.split('/p/')[1];
-       if (productId) {
-         setCheckoutProductId(productId);
-         setCurrentView('checkout');
-         isCheckout = true;
-       }
-    }
+        // 2. Check Auth Session
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        setSession(currentSession);
 
-    // 2. Check Auth Session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      // Only redirect to dashboard if logged in AND NOT on a checkout page
-      if (session && !isCheckout) {
-        setCurrentView('dashboard');
-      }
-    });
+        if (!isCheckout) {
+            if (currentSession) {
+                // Handle Dashboard Sub-routes
+                if (path.startsWith('/dashboard')) {
+                    const subRoute = path.split('/dashboard/')[1];
+                    if (subRoute) setInitialDashboardTab(subRoute);
+                    setCurrentView('dashboard');
+                } else if (path === '/login' || path === '/register') {
+                    // Redirect logged user trying to access login to dashboard
+                    window.history.pushState({}, '', '/dashboard');
+                    setCurrentView('dashboard');
+                } else {
+                     // Default logged in view
+                     if (currentView === 'landing') { // Only redirect if strictly landing
+                        // Optional: stay on landing or go to dashboard?
+                        // Usually apps go to dashboard.
+                        // setCurrentView('dashboard'); 
+                     }
+                }
+            } else {
+                // Public Routes
+                if (path === '/login') setCurrentView('login');
+                else if (path === '/register') setCurrentView('register');
+                else if (path.startsWith('/dashboard')) {
+                    // Protect dashboard
+                    window.history.pushState({}, '', '/login');
+                    setCurrentView('login');
+                } else {
+                    setCurrentView('landing');
+                }
+            }
+        }
+    };
+
+    handleRouting();
 
     // 3. Listen for Auth Changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       
-      // If we are on checkout, stay there regardless of auth state
+      const path = window.location.pathname;
+      const isCheckout = path.startsWith('/p/');
+
       if (isCheckout) return;
 
       if (session) {
-         setCurrentView('dashboard');
+         if (currentView === 'login' || currentView === 'register') {
+             window.history.pushState({}, '', '/dashboard');
+             setCurrentView('dashboard');
+         }
       } else {
-        // Only go to landing if we were inside the dashboard or login/register
-        if (currentView === 'dashboard' || currentView === 'settings') {
+        if (currentView === 'dashboard' || path.startsWith('/dashboard')) {
+          window.history.pushState({}, '', '/');
           setCurrentView('landing');
         }
       }
     });
 
     return () => subscription.unsubscribe();
-  }, []); // Run once on mount
+  }, [currentView]); // Re-run if view changes manually to update URL
 
   // --- Realtime Remote Logout Logic ---
   useEffect(() => {
@@ -83,32 +121,27 @@ const App: React.FC = () => {
       })
       .subscribe();
 
-    const interval = setInterval(async () => {
-       const myDeviceId = localStorage.getItem('payeasy_device_id');
-       if (myDeviceId && session) {
-         const { data, error } = await supabase.from('user_devices').select('id').eq('id', myDeviceId).single();
-         if (!data && !error) { 
-            await supabase.auth.signOut();
-            localStorage.removeItem('payeasy_device_id');
-            alert('Sua sessão expirou ou foi encerrada.');
-            window.location.reload();
-         }
-       }
-    }, 30000);
-
     return () => { 
       supabase.removeChannel(channel); 
-      clearInterval(interval); 
     }
   }, [session]);
 
   const navigate = (view: ViewState) => {
     window.scrollTo(0, 0);
+    
+    // Update URL without reload
+    let path = '/';
+    if (view === 'login') path = '/login';
+    if (view === 'register') path = '/register';
+    if (view === 'dashboard') path = '/dashboard';
+    
+    window.history.pushState({}, '', path);
     setCurrentView(view);
   };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    window.history.pushState({}, '', '/');
     setCurrentView('landing');
   };
 
@@ -117,7 +150,7 @@ const App: React.FC = () => {
   }
 
   if (currentView === 'dashboard' && session) {
-    return <Dashboard session={session} onLogout={handleLogout} />;
+    return <Dashboard session={session} onLogout={handleLogout} initialTab={initialDashboardTab as any} />;
   }
 
   return (

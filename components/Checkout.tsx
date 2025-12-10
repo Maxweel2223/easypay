@@ -2,6 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Clock, ShieldCheck, CheckCircle2, Zap, Smartphone, Lock, User, Mail, AlertTriangle, Check, CreditCard, Loader2, XCircle } from 'lucide-react';
 import { supabase } from '../supabaseClient';
 
+const mpesaLogo = "https://play-lh.googleusercontent.com/BeFHX9dTKeuLrF8TA0gr9kfXLGicQtnxoTM8xJThn9EKCl-h5JmJoqFkaPBoo4qi7w";
+const emolaLogo = "https://play-lh.googleusercontent.com/2TGAhJ55tiyhCwW0ZM43deGv4lUTFTBMoq83mnAO6-bU5hi2NPyKX8BN8iKt13irK7Y=w240-h480-rw";
+
 interface CheckoutProps {
   productId: string;
 }
@@ -29,10 +32,6 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [timeLeft, setTimeLeft] = useState(6 * 60);
 
-  const mpesaLogo = "https://play-lh.googleusercontent.com/BeFHX9dTKeuLrF8TA0gr9kfXLGicQtnxoTM8xJThn9EKCl-h5JmJoqFkaPBoo4qi7w";
-  const emolaLogo = "https://play-lh.googleusercontent.com/2TGAhJ55tiyhCwW0ZM43deGv4lUTFTBMoq83mnAO6-bU5hi2NPyKX8BN8iKt13irK7Y=w240-h480-rw";
-  const successSoundUrl = "https://assets.mixkit.co/active_storage/sfx/2000/2000-preview.mp3";
-
   // Configuration GibraPay
   const GIBRA_API_KEY = "afec688b6241cb5af687496eee6b7e919d4acafa9c2dafef2321185fe95e795280c645422557ae9c8b44eff1736503936379123aecf9a9ee9f8777215ae430b9";
   const GIBRA_WALLET_ID = "1bcc050c-fca2-4296-821d-30134d9a333c";
@@ -43,24 +42,27 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
       setLoading(true);
       setErrorProduct(false);
       
-      const { data, error } = await supabase.from('products').select('*').eq('id', productId).maybeSingle();
-      
-      if (error || !data) {
-        console.error("Error fetching product:", error);
-        setErrorProduct(true);
-      } else {
-        setProduct(data);
-        // Increment View/Click Counter
-        // Note: Using RPC or standard update. Assuming we want to track anonymous views.
-        if (data.id) {
-             const currentViews = data.views_count || 0;
-             await supabase.from('products').update({ views_count: currentViews + 1 }).eq('id', data.id);
-             
-             // Also increment linked payment_links clicks if applicable (optional logic if we had link ID)
-             await supabase.rpc('increment_link_clicks', { product_uuid: data.id }).catch(e => console.log('RPC optional'));
-        }
+      try {
+          const { data, error } = await supabase.from('products').select('*').eq('id', productId).maybeSingle();
+          
+          if (error || !data) {
+            console.error("Error fetching product:", error);
+            setErrorProduct(true);
+          } else {
+            setProduct(data);
+            // Increment View/Click Counter
+            // Note: Using RPC or standard update. Assuming we want to track anonymous views.
+            if (data.id) {
+                 const currentViews = data.views_count || 0;
+                 await supabase.from('products').update({ views_count: currentViews + 1 }).eq('id', data.id);
+            }
+          }
+      } catch (err) {
+          setErrorProduct(true);
+      } finally {
+          // ENSURE loading is false regardless of outcome
+          setLoading(false);
       }
-      setLoading(false);
     };
     fetchProduct();
   }, [productId]);
@@ -85,7 +87,7 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
   };
 
   const playSuccessSound = () => {
-      const audio = new Audio(successSoundUrl);
+      const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2000/2000-preview.mp3");
       audio.play().catch(e => console.log("Audio requires interaction"));
   };
 
@@ -129,16 +131,13 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
              result = await response.json();
              console.log("GibraPay Response:", result);
           } catch (e) {
-             // If JSON parse fails, it's likely a network or CORS issue, treated as error
              throw new Error("Erro de comunicação com o servidor de pagamento.");
           }
 
-          // --- CRITICAL SECURITY CHECK ---
-          // Rule 5 & 6: Validate strict success
-          
+          // Strict Security Checks
           const isStatusError = result.status === 'error';
           const isTransactionDeclined = result.callback?.transaction_status === 'Declined';
-          const isStatusPending = result.status === 'Pending'; // We don't release on Pending unless we have a webhook
+          const isStatusPending = result.status === 'Pending';
           const isDataFailed = result.data?.status === 'failed';
 
           if (isStatusError || isTransactionDeclined || isDataFailed) {
@@ -150,10 +149,6 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
               throw new Error("Erro na requisição de pagamento (HTTP Error).");
           }
 
-          // Only if explicitly successful (assuming 200/201 and no error flags)
-          // Since GibraPay v1/transfer is usually instant for some providers or async for others,
-          // if it returns "Pending", in a real app we would poll. 
-          // For this prompt's requirement "Rule 6: If Pending -> DO NOT deliver", we throw error or ask to wait.
           if (isStatusPending) {
                throw new Error("Pagamento pendente. Por favor, aguarde a confirmação no seu celular e tente novamente.");
           }

@@ -15,28 +15,26 @@ import {
   AlertCircle,
   Edit3,
   ExternalLink,
-  History,
-  MoreHorizontal,
-  Search,
-  Filter,
-  Image as ImageIcon,
   Link as LinkIcon,
   Save,
   Trash2,
-  Eye,
-  MoreVertical
+  Image as ImageIcon,
+  Search,
+  UploadCloud,
+  AlertTriangle
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../supabaseClient';
 
-interface DashboardProps {
-  session: Session;
-  onLogout: () => void;
-}
-
 type Tab = 'overview' | 'products' | 'links' | 'settings';
 type ProductStatus = 'draft' | 'analyzing' | 'active' | 'rejected';
 type ProductCategory = 'ebooks' | 'cursos' | 'mentoria' | 'software' | 'audio' | 'templates' | 'outros';
+
+interface DashboardProps {
+  session: Session;
+  onLogout: () => void;
+  initialTab?: Tab;
+}
 
 interface Product {
   id: string;
@@ -56,7 +54,7 @@ interface Product {
   redemption_link: string;
   sales_count: number;
   total_revenue: number;
-  views_count?: number; // New field for clicks/views
+  views_count?: number;
   created_at: string;
 }
 
@@ -70,8 +68,8 @@ interface PaymentLink {
   created_at: string;
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
-  const [activeTab, setActiveTab] = useState<Tab>('overview');
+const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = 'overview' }) => {
+  const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const productImageInputRef = useRef<HTMLInputElement>(null);
 
@@ -90,8 +88,17 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
   const [selectedProductIdForLink, setSelectedProductIdForLink] = useState('');
   const [isCreatingLink, setIsCreatingLink] = useState(false);
   
-  // Product Modal State
+  // Modals
   const [showProductModal, setShowProductModal] = useState(false);
+  
+  // Delete Confirmation Modal State
+  const [deleteModal, setDeleteModal] = useState<{
+      isOpen: boolean;
+      type: 'product' | 'link' | null;
+      id: string | null;
+      title: string;
+  }>({ isOpen: false, type: null, id: null, title: '' });
+  
   const [productFormStep, setProductFormStep] = useState(1);
   const [isSavingProduct, setIsSavingProduct] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -113,8 +120,17 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
     redemption_link: '',
   });
 
+  // Sync Tab with URL
+  const changeTab = (tab: Tab) => {
+      setActiveTab(tab);
+      window.history.pushState({}, '', `/dashboard/${tab}`);
+      setMobileMenuOpen(false);
+  };
+
   const fetchData = async () => {
     setLoading(true);
+    
+    // Fetch Products
     const { data: productsData } = await supabase
       .from('products')
       .select('*')
@@ -123,27 +139,32 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
 
     if (productsData) setProducts(productsData);
 
-    if (activeTab === 'links') {
-        const { data: linksData } = await supabase
-        .from('payment_links')
-        .select('*')
-        .eq('user_id', session.user.id)
-        .order('created_at', { ascending: false });
-        if (linksData) setPaymentLinks(linksData);
-    }
+    // Fetch Links
+    const { data: linksData } = await supabase
+    .from('payment_links')
+    .select('*')
+    .eq('user_id', session.user.id)
+    .order('created_at', { ascending: false });
+    
+    if (linksData) setPaymentLinks(linksData);
+    
     setLoading(false);
   };
 
   useEffect(() => {
     fetchData();
     
+    // Subscribe to realtime changes for background updates
     const channel = supabase.channel('dashboard_updates')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `user_id=eq.${session.user.id}` }, () => fetchData())
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'payment_links', filter: `user_id=eq.${session.user.id}` }, () => fetchData())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `user_id=eq.${session.user.id}` }, (payload) => {
+         // Optionally handle realtime payload here, but we are doing optimistic updates mostly
+         if (payload.eventType === 'INSERT') setProducts(prev => [payload.new as Product, ...prev]);
+         // Updates and deletes handled locally for speed, but this ensures sync
+    })
     .subscribe();
 
     return () => { supabase.removeChannel(channel); };
-  }, [activeTab]);
+  }, []);
 
   // --- ACTIONS ---
 
@@ -156,24 +177,32 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
         const product = products.find(p => p.id === targetId);
         if (!product) throw new Error("Produto não encontrado");
 
-        await new Promise(resolve => setTimeout(resolve, 800)); // UX delay
+        // UX delay simulated for feeling of processing
+        await new Promise(resolve => setTimeout(resolve, 600)); 
 
-        // URL única baseada no ID do produto (Simples)
-        // Para URLs únicas por link, precisaríamos de um ID de link na rota, mas usaremos o ID do produto conforme estrutura atual
         const linkUrl = `https://fastpayzinmoz.vercel.app/p/${product.id}`;
         
-        const { error } = await supabase.from('payment_links').insert([{
+        const newLinkPayload = {
             user_id: session.user.id,
             product_id: product.id,
             product_name: product.name,
             url: linkUrl,
             clicks: 0
-        }]);
+        };
+
+        const { data, error } = await supabase.from('payment_links').insert([newLinkPayload]).select().single();
 
         if (error) throw error;
+
+        // Immediate Update (Optimistic)
+        if (data) {
+             setPaymentLinks(prev => [data, ...prev]);
+        }
+
         setSelectedProductIdForLink('');
         if (!prodId) alert("Link gerado e salvo no histórico!");
-        if (activeTab !== 'links') setActiveTab('links');
+        if (activeTab !== 'links') changeTab('links');
+
     } catch (e: any) {
         alert("Erro: " + e.message);
     } finally {
@@ -181,23 +210,36 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
     }
   };
 
-  const deleteLink = async (id: string) => {
-      if (!confirm("Tem certeza que deseja excluir este link? O histórico será perdido.")) return;
-      const { error } = await supabase.from('payment_links').delete().eq('id', id);
-      if (error) alert("Erro ao excluir link");
-      else fetchData();
+  const openDeleteModal = (type: 'product' | 'link', id: string, name: string) => {
+      setDeleteModal({
+          isOpen: true,
+          type,
+          id,
+          title: name
+      });
   };
 
-  const deleteProduct = async (id: string) => {
-      if (!confirm("Tem certeza? Isso impedirá novas vendas deste produto.")) return;
-      
-      const { error } = await supabase.from('products').delete().eq('id', id);
-      if (error) {
-          alert("Erro ao excluir: " + error.message);
+  const confirmDelete = async () => {
+      const { type, id } = deleteModal;
+      if (!id || !type) return;
+
+      // Optimistic UI Update - Remove immediately from UI
+      if (type === 'link') {
+          setPaymentLinks(prev => prev.filter(item => item.id !== id));
       } else {
-          // Também remove links associados para manter consistência
+          setProducts(prev => prev.filter(item => item.id !== id));
+          // If product is deleted, also remove associated links from UI
+          setPaymentLinks(prev => prev.filter(item => item.product_id !== id));
+      }
+      
+      setDeleteModal({ ...deleteModal, isOpen: false });
+
+      // Database Operation
+      if (type === 'link') {
+          await supabase.from('payment_links').delete().eq('id', id);
+      } else {
+          await supabase.from('products').delete().eq('id', id);
           await supabase.from('payment_links').delete().eq('product_id', id);
-          fetchData();
       }
   };
 
@@ -243,19 +285,32 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
         const finalStatus = requestedStatus === 'active' ? 'analyzing' : requestedStatus;
         const payload = { user_id: session.user.id, ...newProduct, status: finalStatus };
 
-        let savedId = editingId;
+        let savedData: Product | null = null;
+
         if (editingId) {
-             await supabase.from('products').update(payload).eq('id', editingId);
+             const { data } = await supabase.from('products').update(payload).eq('id', editingId).select().single();
+             savedData = data;
+             // Update UI immediately
+             if (data) {
+                 setProducts(prev => prev.map(p => p.id === editingId ? data : p));
+             }
         } else {
              const { data } = await supabase.from('products').insert([payload]).select().single();
-             if (data) savedId = data.id;
+             savedData = data;
+             // Add to UI immediately
+             if (data) {
+                 setProducts(prev => [data, ...prev]);
+             }
         }
 
         setShowProductModal(false);
         
-        if (finalStatus === 'analyzing' && savedId) {
+        // Simulate analysis process changing to active
+        if (finalStatus === 'analyzing' && savedData) {
              setTimeout(async () => {
-                 await supabase.from('products').update({ status: 'active' }).eq('id', savedId);
+                 await supabase.from('products').update({ status: 'active' }).eq('id', savedData!.id);
+                 // Update local state
+                 setProducts(prev => prev.map(p => p.id === savedData!.id ? { ...p, status: 'active' } : p));
              }, 3000);
         }
     } catch (e: any) {
@@ -291,6 +346,35 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans text-slate-900">
       
+      {/* DELETE MODAL */}
+      {deleteModal.isOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+              <div className="bg-white rounded-2xl max-w-sm w-full p-6 shadow-2xl animate-scaleIn">
+                  <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mb-4 text-red-600 mx-auto">
+                      <AlertTriangle size={24}/>
+                  </div>
+                  <h3 className="text-xl font-bold text-center mb-2 text-slate-900">Excluir {deleteModal.type === 'product' ? 'Produto' : 'Link'}?</h3>
+                  <p className="text-center text-slate-500 mb-6 text-sm">
+                      Você está prestes a remover <span className="font-bold text-slate-800">"{deleteModal.title}"</span>. Esta ação não pode ser desfeita.
+                  </p>
+                  <div className="flex gap-3">
+                      <button 
+                        onClick={() => setDeleteModal({...deleteModal, isOpen: false})} 
+                        className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors"
+                      >
+                          Cancelar
+                      </button>
+                      <button 
+                        onClick={confirmDelete} 
+                        className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-colors shadow-lg shadow-red-200"
+                      >
+                          Sim, Excluir
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
+
       {/* Sidebar Desktop */}
       <aside className={`fixed lg:static inset-y-0 left-0 w-72 bg-white border-r border-slate-200 flex flex-col z-50 transition-transform duration-300 lg:transform-none ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-8 border-b border-slate-100">
@@ -318,7 +402,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
           ].map((item) => (
             <button 
                 key={item.id}
-                onClick={() => { setActiveTab(item.id as Tab); setMobileMenuOpen(false); }} 
+                onClick={() => changeTab(item.id as Tab)} 
                 className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-xl transition-all font-medium text-sm ${activeTab === item.id ? 'bg-brand-50 text-brand-700 shadow-sm border border-brand-100' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}
             >
                 <item.icon size={20} className={activeTab === item.id ? 'text-brand-600' : 'text-slate-400'} /> 
@@ -470,7 +554,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
                                   <Edit3 size={14}/> Editar
                               </button>
                               <button 
-                                onClick={() => deleteProduct(product.id)}
+                                onClick={() => openDeleteModal('product', product.id, product.name)}
                                 className="flex items-center justify-center gap-1 py-2 rounded-lg text-red-500 bg-red-50 hover:bg-red-100 text-xs font-bold transition-colors"
                               >
                                   <Trash2 size={14}/> Excluir
@@ -542,7 +626,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
                    ) : (
                        <div className="grid grid-cols-1 gap-4">
                            {paymentLinks.map(link => (
-                               <div key={link.id} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col md:flex-row items-center gap-6">
+                               <div key={link.id} className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm hover:shadow-md transition-all flex flex-col md:flex-row items-center gap-6 animate-slideDown">
                                    
                                    <div className="flex-1 w-full">
                                        <div className="flex items-center gap-2 mb-1">
@@ -573,7 +657,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
                                                 <ExternalLink size={18} />
                                             </a>
                                             <button 
-                                                onClick={() => deleteLink(link.id)}
+                                                onClick={() => openDeleteModal('link', link.id, link.product_name)}
                                                 className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                                                 title="Excluir Link"
                                             >
@@ -638,15 +722,20 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout }) => {
                            <div>
                                 <label className="block text-xs font-bold text-slate-700 mb-2 uppercase tracking-wide">Imagem de Capa</label>
                                 <div className="flex items-start gap-4">
-                                    <div className="w-24 h-24 bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden flex-shrink-0">
-                                        {newProduct.image_url ? <img src={newProduct.image_url} className="w-full h-full object-cover"/> : <ImageIcon className="text-slate-300"/>}
+                                    <div className="w-24 h-24 bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden flex-shrink-0 relative group">
+                                        {newProduct.image_url ? (
+                                            <img src={newProduct.image_url} className="w-full h-full object-cover"/>
+                                        ) : (
+                                            <UploadCloud className="text-slate-300 w-8 h-8"/>
+                                        )}
                                     </div>
                                     <div className="flex-1">
-                                         <input type="text" className="w-full p-3 text-xs border border-slate-200 rounded-lg mb-3" placeholder="Cole uma URL de imagem..." value={newProduct.image_url || ''} onChange={e => setNewProduct({...newProduct, image_url: e.target.value})} />
+                                         <input type="text" className="w-full p-3 text-xs border border-slate-200 rounded-lg mb-3" placeholder="Ou cole a URL da imagem aqui..." value={newProduct.image_url || ''} onChange={e => setNewProduct({...newProduct, image_url: e.target.value})} />
                                          <div className="flex gap-2">
-                                            <button onClick={() => productImageInputRef.current?.click()} className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-lg transition-colors flex items-center gap-2">
-                                                <Plus size={14}/> Upload do PC
+                                            <button onClick={() => productImageInputRef.current?.click()} className="px-4 py-2 bg-slate-900 text-white hover:bg-slate-800 text-xs font-bold rounded-lg transition-colors flex items-center gap-2">
+                                                <UploadCloud size={14}/> Carregar Arquivo
                                             </button>
+                                            <span className="text-xs text-slate-400 self-center">Max 2MB (JPG, PNG)</span>
                                             <input type="file" className="hidden" ref={productImageInputRef} onChange={handleProductImageUpload} accept="image/*" />
                                          </div>
                                     </div>
