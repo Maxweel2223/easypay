@@ -215,7 +215,7 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
 
           if (saleError) {
               console.error("Erro ao registrar venda pendente:", saleError);
-              // Continuamos mesmo assim, mas o dashboard pode não atualizar em tempo real sem o registro
+              // Continuamos mesmo assim
           } else {
               pendingSaleId = saleData.id;
           }
@@ -270,14 +270,20 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
                throw new Error("Pagamento pendente. Por favor, aguarde a confirmação no seu celular e tente novamente.");
           }
 
-          // 3. SUCESSO - Atualizar venda para APROVADA
+          // 3. SUCESSO - Atualizar venda para APROVADA e Incrementar Produto
           if (pendingSaleId) {
               await supabase.from('sales').update({ status: 'approved' }).eq('id', pendingSaleId);
               
-              // Increment Sales Count on Product
+              // CRUCIAL: Buscar o produto fresco do banco para evitar sobrescrever dados
+              const { data: freshProduct } = await supabase.from('products').select('sales_count, total_revenue').eq('id', product.id).single();
+              
+              const currentSalesCount = freshProduct ? (freshProduct.sales_count || 0) : (product.sales_count || 0);
+              const currentTotalRevenue = freshProduct ? (freshProduct.total_revenue || 0) : (product.total_revenue || 0);
+
+              // Increment Sales Count and Revenue on Product
               await supabase.from('products').update({ 
-                  sales_count: (product.sales_count || 0) + 1,
-                  total_revenue: (product.total_revenue || 0) + totalAmount
+                  sales_count: currentSalesCount + 1,
+                  total_revenue: currentTotalRevenue + totalAmount
               }).eq('id', product.id);
           }
 

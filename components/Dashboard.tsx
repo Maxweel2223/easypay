@@ -158,7 +158,9 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
       const saleDate = new Date(sale.created_at);
       
       if (dateRange === 'today') {
-        return saleDate.toDateString() === now.toDateString();
+        return saleDate.getDate() === now.getDate() && 
+               saleDate.getMonth() === now.getMonth() && 
+               saleDate.getFullYear() === now.getFullYear();
       }
       if (dateRange === '7days') {
         const sevenDaysAgo = new Date();
