@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   LayoutDashboard, 
@@ -28,7 +29,12 @@ import {
   Zap,
   DollarSign,
   ArrowUpRight,
-  Filter
+  Filter,
+  Check,
+  CreditCard,
+  Mail,
+  Phone,
+  Clock
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../supabaseClient';
@@ -121,7 +127,8 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
   const initialMeta = session.user.user_metadata || {};
   const [profile] = useState({
     fullName: initialMeta.full_name || 'Empreendedor',
-    email: session.user.email
+    email: session.user.email,
+    phone: initialMeta.phone_number || ''
   });
 
   // Data State
@@ -316,6 +323,22 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
     } finally { setIsCreatingLink(false); }
   };
   
+  const handleDeleteItem = async () => {
+      if (!deleteModal.id || !deleteModal.type) return;
+      try {
+          if (deleteModal.type === 'product') {
+              await supabase.from('products').delete().eq('id', deleteModal.id);
+              setProducts(prev => prev.filter(p => p.id !== deleteModal.id));
+          } else {
+              await supabase.from('payment_links').delete().eq('id', deleteModal.id);
+              setPaymentLinks(prev => prev.filter(l => l.id !== deleteModal.id));
+          }
+          setDeleteModal({ isOpen: false, type: null, id: null, title: '' });
+      } catch (e) {
+          alert("Erro ao excluir.");
+      }
+  };
+  
   const openDeleteModal = (type: 'product' | 'link', id: string, name: string) => setDeleteModal({ isOpen: true, type, id, title: name });
   
   const handleOpenNewProduct = () => { setNewProduct({ name: '', category: 'ebooks', description: '', price: 0, status: 'draft', is_limited_time: false, image_url: null, has_offer: false, redemption_link: '' }); setEditingId(null); setProductFormStep(1); setShowProductModal(true); };
@@ -450,6 +473,21 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
 
   return (
     <div className="flex h-screen bg-background overflow-hidden font-sans">
+      <style>{`
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #CBD5E1;
+          border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: #94A3B8;
+        }
+      `}</style>
       
       {/* SIDEBAR DESKTOP */}
       <aside className="hidden lg:flex w-64 bg-surface border-r border-gray-100 flex-col p-6 z-20">
@@ -748,14 +786,14 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                     </div>
                 )}
 
-                {/* OTHER TABS (SIMPLIFIED FOR BREVITY, BUT STYLED) */}
+                {/* OTHER TABS */}
                 {activeTab !== 'overview' && (
-                    <div className="bg-surface rounded-2xl shadow-card border border-gray-100 p-6 min-h-[500px]">
+                    <div className="space-y-6">
                         {activeTab === 'products' && (
                              <div className="space-y-6">
-                                <div className="flex justify-between items-center border-b border-gray-50 pb-4">
+                                <div className="flex justify-between items-center border-b border-gray-200 pb-4">
                                    <h2 className="text-xl font-bold text-slate-900">Meus Produtos</h2>
-                                   <button onClick={handleOpenNewProduct} className="px-4 py-2 bg-slate-900 text-white rounded-lg font-bold flex items-center gap-2 text-sm"><Plus size={16} /> Novo</button>
+                                   <button onClick={handleOpenNewProduct} className="px-4 py-2 bg-slate-900 text-white rounded-lg font-bold flex items-center gap-2 text-sm shadow-md hover:bg-slate-800 transition-colors"><Plus size={16} /> Novo</button>
                                 </div>
                                 {loading ? <div className="flex justify-center py-20"><Loader2 className="animate-spin text-slate-300" size={32}/></div> : 
                                  products.length === 0 ? <div className="text-center py-20 text-slate-500">Nenhum produto encontrado.</div> :
@@ -770,14 +808,13 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                                                      <h3 className="font-bold text-slate-900 truncate text-sm mb-1">{product.name}</h3>
                                                      <div className="flex justify-between items-center">
                                                          <span className="text-brand-600 font-bold text-sm">{product.price.toLocaleString()} MT</span>
-                                                         {/* Custom Badge Logic reused */}
                                                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${product.status === 'active' ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{product.status}</span>
                                                      </div>
                                                  </div>
                                              </div>
                                              <div className="grid grid-cols-2 gap-2 border-t border-gray-50 pt-3 mt-auto">
-                                                 <button onClick={() => handleEditProduct(product)} className="py-2 bg-gray-50 text-slate-600 text-xs font-bold rounded-lg hover:bg-gray-100 flex justify-center items-center gap-1"><Edit3 size={14}/> Editar</button>
-                                                 <button onClick={() => openDeleteModal('product', product.id, product.name)} className="py-2 bg-red-50 text-red-500 text-xs font-bold rounded-lg hover:bg-red-100 flex justify-center items-center gap-1"><Trash2 size={14}/> Excluir</button>
+                                                 <button onClick={() => handleEditProduct(product)} className="py-2 bg-gray-50 text-slate-600 text-xs font-bold rounded-lg hover:bg-gray-100 flex justify-center items-center gap-1 transition-colors"><Edit3 size={14}/> Editar</button>
+                                                 <button onClick={() => openDeleteModal('product', product.id, product.name)} className="py-2 bg-red-50 text-red-500 text-xs font-bold rounded-lg hover:bg-red-100 flex justify-center items-center gap-1 transition-colors"><Trash2 size={14}/> Excluir</button>
                                              </div>
                                          </div>
                                      ))}
@@ -785,13 +822,163 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                                 }
                              </div>
                         )}
-                        {/* Placeholder for other tabs to keep consistent style */}
-                        {(activeTab === 'links' || activeTab === 'sales' || activeTab === 'settings') && (
-                            <div className="flex flex-col items-center justify-center h-64 text-slate-400">
-                                <Settings size={48} className="mb-4 opacity-20"/>
-                                <p>Conteúdo da aba <strong>{activeTab}</strong> em construção com o novo design.</p>
-                                <button onClick={() => changeTab('overview')} className="mt-4 text-brand-600 font-bold text-sm hover:underline">Voltar para Visão Geral</button>
-                            </div>
+
+                        {activeTab === 'links' && (
+                             <div className="space-y-6">
+                                <div className="border-b border-gray-200 pb-4">
+                                     <h2 className="text-xl font-bold text-slate-900">Links de Pagamento</h2>
+                                     <p className="text-sm text-slate-500">Gere links diretos para seus clientes pagarem.</p>
+                                </div>
+                                <div className="bg-surface p-6 rounded-2xl border border-gray-100 shadow-card flex flex-col md:flex-row gap-4 items-end">
+                                    <div className="flex-1 w-full space-y-2">
+                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Selecionar Produto</label>
+                                        <select value={selectedProductIdForLink} onChange={e => setSelectedProductIdForLink(e.target.value)} className="w-full p-3 bg-background border border-gray-200 rounded-xl text-sm outline-none focus:border-brand-500 transition-colors">
+                                            <option value="">Selecione um produto...</option>
+                                            {products.filter(p=>p.status==='active').map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                                        </select>
+                                    </div>
+                                    <button onClick={() => generateLink()} disabled={isCreatingLink || !selectedProductIdForLink} className="w-full md:w-auto px-6 py-3 bg-brand-600 text-white font-bold rounded-xl text-sm hover:bg-brand-700 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-brand-500/20 transition-all">
+                                        {isCreatingLink ? <Loader2 className="animate-spin" size={18}/> : <LinkIcon size={18}/>} 
+                                        Gerar Link
+                                    </button>
+                                </div>
+                                <div className="space-y-4">
+                                    {paymentLinks.length === 0 ? <div className="text-center py-10 text-slate-400 text-sm">Nenhum link gerado.</div> : 
+                                    paymentLinks.map(link => (
+                                        <div key={link.id} className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4 hover:border-brand-100 transition-colors">
+                                            <div className="flex-1 min-w-0">
+                                                <h4 className="font-bold text-slate-900 text-sm truncate mb-1">{link.product_name}</h4>
+                                                <div className="flex items-center gap-2 text-xs text-slate-400 font-mono bg-gray-50 px-2 py-1 rounded w-fit">
+                                                    <ExternalLink size={12}/> {link.url}
+                                                </div>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button onClick={() => navigator.clipboard.writeText(link.url).then(()=>alert("Copiado!"))} className="p-2.5 text-slate-500 hover:text-brand-600 bg-gray-50 hover:bg-brand-50 rounded-lg transition-colors"><Copy size={16}/></button>
+                                                <a href={link.url} target="_blank" className="p-2.5 text-slate-500 hover:text-brand-600 bg-gray-50 hover:bg-brand-50 rounded-lg transition-colors"><ExternalLink size={16}/></a>
+                                                <button onClick={() => openDeleteModal('link', link.id, link.product_name)} className="p-2.5 text-slate-500 hover:text-red-600 bg-gray-50 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={16}/></button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                             </div>
+                        )}
+
+                        {activeTab === 'sales' && (
+                             <div className="space-y-6">
+                                 <div className="pb-4 border-b border-gray-200">
+                                    <h2 className="text-xl font-bold text-slate-900">Histórico de Vendas</h2>
+                                    <p className="text-sm text-slate-500">Acompanhe todas as transações realizadas.</p>
+                                 </div>
+                                 <div className="bg-surface rounded-2xl border border-gray-100 shadow-card overflow-hidden">
+                                    <div className="overflow-x-auto">
+                                        <table className="w-full text-left">
+                                            <thead className="bg-gray-50 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                                                <tr>
+                                                    <th className="p-5 pl-6">ID</th>
+                                                    <th className="p-5">Produto</th>
+                                                    <th className="p-5">Cliente</th>
+                                                    <th className="p-5">Valor</th>
+                                                    <th className="p-5">Método</th>
+                                                    <th className="p-5">Data</th>
+                                                    <th className="p-5">Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="text-sm">
+                                                {filteredSales.map(sale => (
+                                                    <tr key={sale.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
+                                                        <td className="p-5 pl-6 font-mono text-xs text-slate-400">#{sale.id.slice(0,8)}</td>
+                                                        <td className="p-5 font-bold text-slate-800">{sale.product_name}</td>
+                                                        <td className="p-5 text-slate-600">
+                                                            <div className="font-medium">{sale.customer_name}</div>
+                                                            <div className="text-xs text-slate-400">{sale.customer_phone}</div>
+                                                        </td>
+                                                        <td className="p-5 font-bold text-slate-900">{sale.amount.toLocaleString()} MT</td>
+                                                        <td className="p-5">
+                                                            <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium uppercase">
+                                                                <div className={`w-1.5 h-1.5 rounded-full ${sale.payment_method === 'mpesa' ? 'bg-red-500' : 'bg-orange-500'}`}></div>
+                                                                {sale.payment_method}
+                                                            </div>
+                                                        </td>
+                                                        <td className="p-5 text-xs text-slate-500">{new Date(sale.created_at).toLocaleDateString()}</td>
+                                                        <td className="p-5">
+                                                            <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase ${
+                                                                sale.status === 'approved' ? 'bg-green-100 text-green-700' : 
+                                                                sale.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 
+                                                                'bg-red-100 text-red-700'
+                                                            }`}>
+                                                                {sale.status === 'approved' ? 'Pago' : sale.status === 'pending' ? 'Pendente' : 'Cancelado'}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                                {filteredSales.length === 0 && (
+                                                    <tr><td colSpan={7} className="p-8 text-center text-slate-400 text-sm">Nenhuma venda encontrada.</td></tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                 </div>
+                             </div>
+                        )}
+
+                        {activeTab === 'settings' && (
+                             <div className="max-w-2xl mx-auto py-6 space-y-6">
+                                 <div className="pb-4 border-b border-gray-200">
+                                    <h2 className="text-xl font-bold text-slate-900">Configurações</h2>
+                                    <p className="text-sm text-slate-500">Gerencie seu perfil e preferências.</p>
+                                 </div>
+                                 
+                                 <div className="bg-surface rounded-2xl border border-gray-100 shadow-card overflow-hidden">
+                                     <div className="p-6 border-b border-gray-50">
+                                         <h3 className="font-bold text-slate-900 mb-1">Perfil do Usuário</h3>
+                                         <p className="text-sm text-slate-400">Suas informações pessoais.</p>
+                                     </div>
+                                     <div className="p-6 space-y-6">
+                                         <div className="flex items-center gap-4 mb-4">
+                                             <div className="w-16 h-16 rounded-full bg-brand-50 border border-brand-100 flex items-center justify-center text-brand-600 font-bold text-2xl">
+                                                 {profile.fullName.charAt(0)}
+                                             </div>
+                                             <div>
+                                                 <button className="text-sm text-brand-600 font-bold hover:underline">Alterar foto</button>
+                                             </div>
+                                         </div>
+                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                             <div className="space-y-1">
+                                                 <label className="text-xs font-bold text-slate-500 uppercase">Nome Completo</label>
+                                                 <div className="relative">
+                                                     <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18}/>
+                                                     <input type="text" value={profile.fullName} readOnly className="w-full pl-10 p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-slate-600 cursor-not-allowed"/>
+                                                 </div>
+                                             </div>
+                                             <div className="space-y-1">
+                                                 <label className="text-xs font-bold text-slate-500 uppercase">Email</label>
+                                                 <div className="relative">
+                                                     <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18}/>
+                                                     <input type="text" value={profile.email} readOnly className="w-full pl-10 p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-slate-600 cursor-not-allowed"/>
+                                                 </div>
+                                             </div>
+                                             <div className="space-y-1">
+                                                 <label className="text-xs font-bold text-slate-500 uppercase">Telefone</label>
+                                                 <div className="relative">
+                                                     <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18}/>
+                                                     <input type="text" value={profile.phone} readOnly className="w-full pl-10 p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm text-slate-600 cursor-not-allowed"/>
+                                                 </div>
+                                             </div>
+                                         </div>
+                                     </div>
+                                     <div className="p-4 bg-gray-50 text-right">
+                                         <button disabled className="bg-slate-300 text-white px-6 py-2 rounded-xl text-sm font-bold cursor-not-allowed">Salvar Alterações</button>
+                                     </div>
+                                 </div>
+
+                                 <div className="bg-red-50 rounded-2xl border border-red-100 p-6 flex items-center justify-between">
+                                     <div>
+                                         <h3 className="font-bold text-red-900 text-sm">Zona de Perigo</h3>
+                                         <p className="text-xs text-red-700 mt-1">Sair da sua conta encerrará sua sessão atual.</p>
+                                     </div>
+                                     <button onClick={onLogout} className="px-4 py-2 border border-red-200 text-red-600 font-bold rounded-xl text-sm hover:bg-red-100 transition-colors">Sair da Conta</button>
+                                 </div>
+                             </div>
                         )}
                     </div>
                 )}
@@ -811,7 +998,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                 <button onClick={() => setShowProductModal(false)}><X size={24} className="text-slate-400 hover:text-slate-600"/></button>
             </div>
             <div className="flex-1 overflow-y-auto p-8 bg-surface">
-               {/* Simplified Form Content Reused with New Styles */}
                <div className="space-y-6">
                    {productFormStep === 1 && (
                        <div className="space-y-5">
@@ -826,23 +1012,69 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                                    <button onClick={handleGenerateDescriptionAI} disabled={isGeneratingAI} className="absolute bottom-3 right-3 text-brand-600 bg-brand-50 px-3 py-1.5 rounded-lg text-xs font-bold flex gap-1 items-center disabled:opacity-50 hover:bg-brand-100 transition-colors">{isGeneratingAI ? <Loader2 size={12} className="animate-spin"/> : <Sparkles size={12}/>} IA</button>
                                </div>
                            </div>
+                           <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Imagem URL</label>
+                                <div className="flex gap-2">
+                                     <input type="text" className="w-full p-3.5 bg-background border border-gray-200 rounded-xl text-sm" placeholder="https://..." value={newProduct.image_url || ''} onChange={e => setNewProduct({...newProduct, image_url: e.target.value})} />
+                                     <button onClick={() => productImageInputRef.current?.click()} className="px-4 bg-gray-50 border border-gray-200 rounded-xl text-slate-600 hover:bg-gray-100"><UploadCloud size={20}/></button>
+                                     <input type="file" className="hidden" ref={productImageInputRef} onChange={handleProductImageUpload} accept="image/*" />
+                                </div>
+                           </div>
                        </div>
                    )}
-                   {/* Steps 2 & 3 logic would go here, styled similarly */}
-                   {productFormStep > 1 && (
-                       <div className="text-center py-10 text-slate-500">
-                           Próximos passos do formulário (Lógica mantida, estilo atualizado)
+                   {productFormStep === 2 && (
+                       <div className="space-y-5">
+                           <div>
+                               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Preço (MT)</label>
+                               <input type="number" className="w-full p-3.5 bg-background border border-gray-200 rounded-xl text-sm font-bold" placeholder="0.00" value={newProduct.price || ''} onChange={e => setNewProduct({...newProduct, price: parseFloat(e.target.value)})} />
+                           </div>
+                           <div>
+                               <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Link de Entrega</label>
+                               <input type="url" className="w-full p-3.5 bg-background border border-gray-200 rounded-xl text-sm" placeholder="https://drive.google.com..." value={newProduct.redemption_link || ''} onChange={e => setNewProduct({...newProduct, redemption_link: e.target.value})} />
+                           </div>
+                           <div className="bg-brand-50/50 p-5 rounded-xl border border-brand-100 space-y-4">
+                               <div className="flex items-center justify-between">
+                                   <span className="text-sm font-bold text-slate-700 flex items-center gap-2"><Clock size={16}/> Oferta Limitada</span>
+                                   <input type="checkbox" checked={newProduct.is_limited_time} onChange={e => setNewProduct({...newProduct, is_limited_time: e.target.checked})} className="w-5 h-5 text-brand-600 rounded focus:ring-brand-500 cursor-pointer"/>
+                               </div>
+                               <div className="flex items-center justify-between">
+                                   <span className="text-sm font-bold text-slate-700 flex items-center gap-2"><Zap size={16}/> Order Bump</span>
+                                   <input type="checkbox" checked={newProduct.has_offer} onChange={e => setNewProduct({...newProduct, has_offer: e.target.checked})} className="w-5 h-5 text-brand-600 rounded focus:ring-brand-500 cursor-pointer"/>
+                               </div>
+                               {newProduct.has_offer && (<div className="grid grid-cols-2 gap-3 pt-2"><input type="text" placeholder="Título Extra" className="p-3 border rounded-lg text-sm" value={newProduct.offer_title} onChange={e => setNewProduct({...newProduct, offer_title: e.target.value})} /><input type="number" placeholder="Preço" className="p-3 border rounded-lg text-sm" value={newProduct.offer_price || ''} onChange={e => setNewProduct({...newProduct, offer_price: parseFloat(e.target.value)})} /></div>)}
+                           </div>
+                       </div>
+                   )}
+                   {productFormStep === 3 && (
+                       <div className="text-center py-8">
+                           <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6 text-green-600 shadow-lg shadow-green-100"><Save size={32}/></div>
+                           <h3 className="font-bold text-xl text-slate-900 mb-2">Pronto para publicar?</h3>
+                           <p className="text-slate-500 text-sm mb-8 max-w-xs mx-auto">Seu produto estará disponível para venda imediatamente após a confirmação.</p>
                        </div>
                    )}
                </div>
             </div>
             <div className="px-8 py-5 border-t border-gray-100 bg-gray-50/50 flex justify-between items-center">
                 {productFormStep > 1 ? <button onClick={() => setProductFormStep(s => s-1)} className="text-slate-600 text-sm font-bold hover:text-slate-900">Voltar</button> : <div/>}
-                {productFormStep === 1 && <button onClick={() => setProductFormStep(2)} className="bg-slate-900 text-white px-8 py-3 rounded-xl text-sm font-bold hover:bg-slate-800 shadow-lg shadow-slate-200 transition-all">Continuar</button>}
-                {productFormStep > 1 && <button onClick={() => saveProduct('active')} disabled={isSavingProduct} className="bg-brand-600 text-white px-8 py-3 rounded-xl font-bold flex justify-center items-center gap-2 hover:bg-brand-700 shadow-lg shadow-brand-500/20">{isSavingProduct ? 'Salvando...' : 'Publicar Produto'}</button>}
+                {productFormStep < 3 && <button onClick={() => setProductFormStep(s => s+1)} className="bg-slate-900 text-white px-8 py-3 rounded-xl text-sm font-bold hover:bg-slate-800 shadow-lg shadow-slate-200 transition-all">Continuar</button>}
+                {productFormStep === 3 && <button onClick={() => saveProduct('active')} disabled={isSavingProduct} className="bg-brand-600 text-white px-8 py-3 rounded-xl font-bold flex justify-center items-center gap-2 hover:bg-brand-700 shadow-lg shadow-brand-500/20">{isSavingProduct ? <Loader2 className="animate-spin" size={18} /> : null}{isSavingProduct ? 'Salvando...' : 'Publicar Produto'}</button>}
             </div>
           </div>
         </div>
+      )}
+      
+      {/* Delete Modal */}
+      {deleteModal.isOpen && (
+         <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+             <div className="bg-white rounded-2xl p-6 max-w-sm w-full shadow-2xl">
+                 <h3 className="text-lg font-bold text-slate-900 mb-2">Excluir item?</h3>
+                 <p className="text-slate-500 text-sm mb-6">Tem certeza que deseja excluir "{deleteModal.title}"? Esta ação não pode ser desfeita.</p>
+                 <div className="flex gap-3">
+                     <button onClick={() => setDeleteModal({ isOpen: false, type: null, id: null, title: '' })} className="flex-1 py-2.5 bg-gray-100 text-slate-700 font-bold rounded-xl hover:bg-gray-200">Cancelar</button>
+                     <button onClick={handleDeleteItem} className="flex-1 py-2.5 bg-red-500 text-white font-bold rounded-xl hover:bg-red-600">Excluir</button>
+                 </div>
+             </div>
+         </div>
       )}
 
     </div>
