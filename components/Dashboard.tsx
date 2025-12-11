@@ -28,7 +28,8 @@ import {
   BarChart3,
   Calendar,
   Filter,
-  ChevronDown
+  ChevronDown,
+  Bell
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../supabaseClient';
@@ -95,7 +96,7 @@ interface Sale {
 
 const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = 'overview' }) => {
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
-  const [isTabLoading, setIsTabLoading] = useState(false); // New Loading State for Tabs
+  const [isTabLoading, setIsTabLoading] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const productImageInputRef = useRef<HTMLInputElement>(null);
 
@@ -151,6 +152,23 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
     redemption_link: '',
   });
 
+  // --- NOTIFICATION HELPER ---
+  const requestNotificationPermission = async () => {
+    if (!("Notification" in window)) return;
+    if (Notification.permission === "default") {
+      await Notification.requestPermission();
+    }
+  };
+
+  const triggerBrowserNotification = (title: string, body: string) => {
+    if (Notification.permission === "granted") {
+      new Notification(title, { body, icon: 'https://cdn-icons-png.flaticon.com/512/1077/1077114.png' });
+      // Play sound
+      const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
+      audio.play().catch(e => console.log("Audio play failed", e));
+    }
+  };
+
   // --- FILTRAGEM POR DATA ---
   const getFilteredSales = () => {
     const now = new Date();
@@ -184,7 +202,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
   const filteredApprovedSales = filteredSales.filter(s => s.status === 'approved');
 
   // --- HELPER PARA CALCULAR ESTATISTICAS POR PRODUTO ---
-  // Calcula dinamicamente baseado na tabela de vendas, não no contador estático do produto
   const getProductStats = (productId: string) => {
       const productSales = sales.filter(s => s.product_id === productId && s.status === 'approved');
       const count = productSales.length;
@@ -212,44 +229,33 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
       }, 0);
   };
 
-  // Sync Tab with URL (Safe version) & Handle Loading
   const changeTab = (tab: Tab) => {
       if (tab === activeTab) return;
-      
       setIsTabLoading(true);
       setActiveTab(tab);
       setMobileMenuOpen(false);
-
-      try {
-        window.history.pushState({}, '', `/dashboard/${tab}`);
-      } catch (e) {
-        // Ignore SecurityError
-      }
-
-      // Simulate loading delay for better UX
-      setTimeout(() => {
-          setIsTabLoading(false);
-      }, 600);
+      try { window.history.pushState({}, '', `/dashboard/${tab}`); } catch (e) {}
+      setTimeout(() => { setIsTabLoading(false); }, 600);
   };
 
   const fetchData = async () => {
-    setLoading(true);
-    
+    // Silent update (do not set global loading to true to avoid flicker)
     try {
-        // Fetch Sales First to have data ready
-        const { data: salesData, error: salesError } = await supabase
+        const { data: salesData } = await supabase
         .from('sales')
         .select('*')
         .eq('user_id', session.user.id)
         .order('created_at', { ascending: false });
 
-        if (!salesError && salesData) {
-            setSales(salesData);
-        } else {
-             setSales([]);
+        if (salesData) {
+            setSales(prevSales => {
+                // Check if data actually changed to avoid unnecessary rerenders if possible, 
+                // but for now simple replacement ensures freshness.
+                // We could implement deep comparison here if performance degrades.
+                return JSON.stringify(salesData) !== JSON.stringify(prevSales) ? salesData : prevSales;
+            });
         }
 
-        // Fetch Products
         const { data: productsData } = await supabase
           .from('products')
           .select('*')
@@ -258,7 +264,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
 
         if (productsData) setProducts(productsData);
 
-        // Fetch Links
         const { data: linksData } = await supabase
         .from('payment_links')
         .select('*')
@@ -270,26 +275,51 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
     } catch (e) {
         console.error("Error fetching data", e);
     }
-    
-    setLoading(false);
   };
 
   useEffect(() => {
-    fetchData();
+    // Initial Load
+    const initialLoad = async () => {
+        setLoading(true);
+        await fetchData();
+        setLoading(false);
+        requestNotificationPermission();
+    };
+    initialLoad();
+
+    // 1. Polling Mechanism: Refresh data every 5 seconds
+    const intervalId = setInterval(() => {
+        fetchData();
+    }, 5000); // 5 seconds polling
     
-    // Subscribe to realtime updates for sales and products
+    // 2. Realtime Subscriptions
     const channel = supabase.channel('dashboard_updates')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `user_id=eq.${session.user.id}` }, (payload) => {
-         if (payload.eventType === 'INSERT') setProducts(prev => [payload.new as Product, ...prev]);
-         if (payload.eventType === 'UPDATE') setProducts(prev => prev.map(p => p.id === payload.new.id ? payload.new as Product : p));
+         fetchData(); // Just refetch all to be safe and simple
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'sales', filter: `user_id=eq.${session.user.id}` }, (payload) => {
-         if (payload.eventType === 'INSERT') setSales(prev => [payload.new as Sale, ...prev]);
-         if (payload.eventType === 'UPDATE') setSales(prev => prev.map(s => s.id === payload.new.id ? payload.new as Sale : s));
+         // Handle Notification
+         if (payload.eventType === 'INSERT') {
+             const newSale = payload.new as Sale;
+             setSales(prev => [newSale, ...prev]);
+             if (newSale.status === 'approved') {
+                 triggerBrowserNotification("Nova Venda Aprovada! 💰", `Você recebeu ${newSale.amount} MT de ${newSale.customer_name || 'um cliente'}.`);
+             }
+         } else if (payload.eventType === 'UPDATE') {
+             const updatedSale = payload.new as Sale;
+             setSales(prev => prev.map(s => s.id === updatedSale.id ? updatedSale : s));
+             // Trigger notification if status changed to approved
+             if (updatedSale.status === 'approved' && (payload.old as Sale)?.status !== 'approved') {
+                 triggerBrowserNotification("Pagamento Confirmado! ✅", `A venda de ${updatedSale.amount} MT foi aprovada com sucesso.`);
+             }
+         }
     })
     .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    return () => { 
+        supabase.removeChannel(channel); 
+        clearInterval(intervalId);
+    };
   }, []);
 
   // --- ACTIONS ---
@@ -303,28 +333,23 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
         const product = products.find(p => p.id === targetId);
         if (!product) throw new Error("Produto não encontrado");
 
-        // Use origin dinamico para garantir que funcione em qualquer ambiente
         const baseUrl = window.location.origin;
 
         const newLinkPayload = {
             user_id: session.user.id,
             product_id: product.id,
             product_name: product.name,
-            url: 'Gerando link...', // Texto temporário
+            url: 'Gerando link...',
         };
 
-        // 1. Insert Initial Record - Safe Array Handling (No .single())
         const { data, error } = await supabase.from('payment_links').insert([newLinkPayload]).select();
 
         if (error) throw error;
         if (!data || data.length === 0) throw new Error("Falha ao criar o registro do link");
 
-        const createdLink = data[0]; // Access first element safely
-
-        // 2. Construct Final URL (Manually, to ensure we have it)
+        const createdLink = data[0]; 
         const finalUrl = `${baseUrl}/p/${product.id}?ref=${createdLink.id}`;
         
-        // 3. Update DB
         const { error: updateError } = await supabase
             .from('payment_links')
             .update({ url: finalUrl })
@@ -336,13 +361,8 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
              throw updateError;
         }
         
-        // 4. Construct Final Object Optimistically (Don't rely on DB return for UI responsiveness)
-        const finalLinkObject = {
-            ...createdLink,
-            url: finalUrl
-        };
+        const finalLinkObject = { ...createdLink, url: finalUrl };
 
-        // Force a delay to show the beautiful loading screen
         await new Promise(resolve => setTimeout(resolve, 1500));
 
         setPaymentLinks(prev => [finalLinkObject, ...prev]);
@@ -351,7 +371,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
 
     } catch (e: any) {
         console.error("Link Generation Error:", e);
-        // Do not alert if it was the updateError handled above, unless it is critical
         if (!e.message.includes("permissões")) {
            alert("Erro ao gerar link: " + e.message);
         }
@@ -361,12 +380,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
   };
 
   const openDeleteModal = (type: 'product' | 'link', id: string, name: string) => {
-      setDeleteModal({
-          isOpen: true,
-          type,
-          id,
-          title: name
-      });
+      setDeleteModal({ isOpen: true, type, id, title: name });
   };
 
   const confirmDelete = async () => {
@@ -387,7 +401,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
 
       try {
           if (type === 'link') {
-              const { error, data } = await supabase.from('payment_links').delete().eq('id', id).select();
+              const { error } = await supabase.from('payment_links').delete().eq('id', id).select();
               if (error) throw error;
           } else {
               await supabase.from('payment_links').delete().eq('product_id', id);
@@ -778,6 +792,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                 <p className="text-slate-500 mt-1 flex items-center gap-2 font-medium">
                     <Calendar size={14} className="text-brand-400" /> 
                     {new Date().toLocaleDateString('pt-MZ', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                    <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse"><div className="w-1.5 h-1.5 rounded-full bg-green-600"></div>Ao Vivo</span>
                 </p>
               </div>
               
@@ -1204,7 +1219,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                </div>
                <h2 className="text-2xl font-bold mb-3 text-slate-900">Configurações da Conta</h2>
                <p className="text-slate-500 mb-8 max-w-sm mx-auto font-medium">Em breve você poderá gerenciar seu perfil, métodos de recebimento e notificações.</p>
-               <button className="bg-slate-100 text-slate-400 px-6 py-2 rounded-full text-sm font-bold cursor-not-allowed">Em Desenvolvimento</button>
+               <button onClick={requestNotificationPermission} className="bg-brand-100 text-brand-700 px-6 py-2 rounded-full text-sm font-bold flex items-center gap-2 mx-auto hover:bg-brand-200 transition-colors"><Bell size={16}/> Ativar Notificações</button>
            </div>
         )}
 
