@@ -42,105 +42,64 @@ const Login: React.FC<LoginProps> = ({ onNavigate }) => {
   };
 
   return (
-    <div className="min-h-screen flex bg-slate-50">
-      {/* Left Side - Brand / Testimonial (Hidden on mobile) */}
-      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-brand-600 to-brand-900 relative overflow-hidden flex-col justify-between p-16 text-white">
-        <div className="absolute top-0 right-0 -mr-20 -mt-20 w-96 h-96 bg-brand-400 rounded-full mix-blend-multiply filter blur-3xl opacity-30"></div>
-        <div className="absolute bottom-0 left-0 -ml-20 -mb-20 w-96 h-96 bg-brand-500 rounded-full mix-blend-multiply filter blur-3xl opacity-30"></div>
-        
-        <div className="relative z-10">
+    <div className="min-h-screen flex bg-slate-100">
+      <div className="hidden lg:flex lg:w-1/2 bg-brand-600 items-center justify-center p-12 text-white">
+        <div className="max-w-md">
           <div className="flex items-center gap-2 mb-8 cursor-pointer" onClick={() => onNavigate('landing')}>
-            <div className="w-10 h-10 bg-white/10 backdrop-blur-md border border-white/20 rounded-xl flex items-center justify-center text-white">
-              <Wallet size={24} />
-            </div>
-            <span className="text-2xl font-bold tracking-tight">
-              Pay<span className="text-brand-300">Easy</span>
-            </span>
+            <Wallet size={32} />
+            <span className="text-3xl font-bold">PayEasy</span>
           </div>
-        </div>
-
-        <div className="relative z-10 max-w-lg">
-          <div className="text-5xl font-bold leading-tight mb-8 tracking-tight">
-            Gerencie seu império digital com estilo.
-          </div>
-          <p className="text-xl text-brand-100 font-light mb-8 leading-relaxed">
-            "A PayEasy tem a estética e a funcionalidade que eu sempre procurei. A integração com M-Pesa é perfeita e rápida."
-          </p>
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-full border-2 border-brand-400 overflow-hidden">
-                <img src="https://picsum.photos/100/100?random=1" alt="User" className="w-full h-full object-cover" />
-            </div>
-            <div>
-              <div className="font-bold">Marta Xavier</div>
-              <div className="text-sm text-brand-200">Empreendedora Digital</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="text-sm text-brand-200 relative z-10 opacity-70">
-          © 2025 PayEasy Moçambique
+          <h1 className="text-4xl font-bold mb-6">Bem-vindo de volta.</h1>
+          <p className="text-lg text-brand-100">Gerencie seus produtos digitais e acompanhe suas vendas em tempo real.</p>
         </div>
       </div>
 
-      {/* Right Side - Form */}
-      <div className="w-full lg:w-1/2 flex items-center justify-center p-8 bg-slate-50">
-        <div className="w-full max-w-md bg-white p-8 rounded-3xl shadow-card border border-slate-100">
-          {/* Mobile Logo */}
-          <div className="lg:hidden flex items-center gap-2 mb-10 justify-center" onClick={() => onNavigate('landing')}>
-            <div className="w-10 h-10 bg-brand-600 rounded-xl flex items-center justify-center text-white">
+      <div className="w-full lg:w-1/2 flex items-center justify-center p-6">
+        <div className="w-full max-w-md bg-white p-8 rounded-lg shadow-lg">
+          <div className="lg:hidden flex items-center gap-2 mb-8 justify-center" onClick={() => onNavigate('landing')}>
+            <div className="w-10 h-10 bg-brand-600 rounded-lg flex items-center justify-center text-white">
               <Wallet size={24} />
             </div>
-            <span className="text-2xl font-bold tracking-tight text-slate-900">
-              Pay<span className="text-brand-600">Easy</span>
-            </span>
+            <span className="text-2xl font-bold text-slate-900">PayEasy</span>
           </div>
 
-          <div className="text-center lg:text-left mb-10">
-            <h2 className="text-3xl font-bold text-slate-900 mb-3 tracking-tight">Bem-vindo de volta!</h2>
-            <p className="text-slate-500 font-medium">
-              Não tem uma conta? <button onClick={() => onNavigate('register')} className="text-brand-600 font-bold hover:underline">Crie uma grátis</button>
-            </p>
-          </div>
+          <h2 className="text-2xl font-bold text-slate-900 mb-6 text-center lg:text-left">Fazer Login</h2>
 
-          <form className="space-y-5" onSubmit={handleLogin}>
+          <form className="space-y-4" onSubmit={handleLogin}>
             {error && (
-              <div className="bg-red-50 border border-red-100 text-red-600 text-sm p-4 rounded-xl font-medium">
+              <div className="bg-red-50 border border-red-200 text-red-600 text-sm p-3 rounded font-medium">
                 {error}
               </div>
             )}
             
             <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase mb-2 ml-1">Email</label>
-              <div className="relative group">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-brand-600 transition-colors">
-                  <Mail size={20} />
-                </div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                 <input 
                   type="email" 
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all placeholder-slate-400 text-slate-900 font-medium"
+                  className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-colors"
                   placeholder="seu@email.com"
                 />
               </div>
             </div>
 
             <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="block text-xs font-bold text-slate-500 uppercase ml-1">Senha</label>
-                <a href="#" className="text-sm text-brand-600 hover:text-brand-700 font-bold">Esqueceu?</a>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-slate-700">Senha</label>
+                <a href="#" className="text-sm text-brand-600 hover:text-brand-700 font-medium">Esqueceu?</a>
               </div>
-              <div className="relative group">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400 group-focus-within:text-brand-600 transition-colors">
-                  <Lock size={20} />
-                </div>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                 <input 
                   type="password" 
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
-                  className="w-full pl-12 pr-4 py-3.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all placeholder-slate-400 text-slate-900 font-medium"
+                  className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-colors"
                   placeholder="••••••••"
                 />
               </div>
@@ -149,18 +108,14 @@ const Login: React.FC<LoginProps> = ({ onNavigate }) => {
             <button 
               type="submit"
               disabled={loading}
-              className="w-full bg-gradient-to-r from-brand-400 to-brand-600 hover:from-brand-500 hover:to-brand-700 text-white font-bold py-4 rounded-xl shadow-glow transition-all transform hover:-translate-y-0.5 active:scale-95 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+              className="w-full bg-brand-600 hover:bg-brand-700 text-white font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-2 disabled:opacity-70"
             >
-              {loading ? (
-                <>
-                  <Loader2 size={20} className="animate-spin" /> Entrando...
-                </>
-              ) : (
-                <>
-                  Entrar na Plataforma <ArrowRight size={20} />
-                </>
-              )}
+              {loading ? <Loader2 size={20} className="animate-spin" /> : <>Entrar <ArrowRight size={20} /></>}
             </button>
+            
+            <p className="text-center text-sm text-slate-600 mt-4">
+              Não tem uma conta? <button onClick={() => onNavigate('register')} className="text-brand-600 font-bold hover:underline">Criar conta grátis</button>
+            </p>
           </form>
         </div>
       </div>
