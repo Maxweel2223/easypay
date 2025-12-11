@@ -17,13 +17,10 @@
               sans: ['Inter', 'sans-serif'],
             },
             boxShadow: {
-              'card': '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
+              'card': '0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03)',
+              'glow': '0 0 15px rgba(59, 130, 246, 0.5)',
             },
             colors: {
-              // Revert Slate to standard Tailwind Gray/Slate (Clean look)
-              // We do not override 'slate' here, letting Tailwind use its default professional grays.
-              
-              // Standard Professional Blue Brand Palette
               brand: {
                 50: '#eff6ff',
                 100: '#dbeafe',
@@ -44,16 +41,16 @@
     <style>
       body {
         font-family: 'Inter', sans-serif;
-        background-color: #f8fafc; /* Standard Slate-50 */
-        color: #0f172a; /* Standard Slate-900 */
+        background-color: #F5F6F8; /* New Premium Light Gray Background */
+        color: #0f172a; 
         scroll-behavior: smooth;
       }
       /* Custom Scrollbar */
       ::-webkit-scrollbar {
-        width: 8px;
+        width: 6px;
       }
       ::-webkit-scrollbar-track {
-        background: #f1f5f9; 
+        background: #F5F6F8; 
       }
       ::-webkit-scrollbar-thumb {
         background: #cbd5e1; 
@@ -78,7 +75,7 @@
 </script>
 <link rel="stylesheet" href="/index.css">
 </head>
-  <body class="bg-slate-50 text-slate-900 antialiased selection:bg-brand-200 selection:text-brand-900">
+  <body class="antialiased selection:bg-brand-200 selection:text-brand-900">
     <div id="root"></div>
   <script type="module" src="/index.tsx"></script>
 </body>

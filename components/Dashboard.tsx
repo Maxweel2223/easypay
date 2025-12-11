@@ -29,7 +29,11 @@ import {
   Calendar,
   Filter,
   ChevronDown,
-  Bell
+  Bell,
+  BellRing,
+  MousePointerClick,
+  Activity,
+  ArrowUpRight
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../supabaseClient';
@@ -94,11 +98,28 @@ interface Sale {
   created_at: string;
 }
 
+interface AppNotification {
+    id: string;
+    title: string;
+    message: string;
+    read: boolean;
+    created_at: string;
+}
+
 const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = 'overview' }) => {
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
   const [isTabLoading, setIsTabLoading] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const productImageInputRef = useRef<HTMLInputElement>(null);
+
+  // Notification State
+  const [showNotificationPrompt, setShowNotificationPrompt] = useState(false);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [showNotificationsDropdown, setShowNotificationsDropdown] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // Search State
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Date Filtering State
   const [dateRange, setDateRange] = useState<DateRange>('7days');
@@ -153,63 +174,98 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
   });
 
   // --- NOTIFICATION HELPER ---
-  const requestNotificationPermission = async () => {
-    if (!("Notification" in window)) return;
-    if (Notification.permission === "default") {
-      await Notification.requestPermission();
+  const handleEnableNotifications = async () => {
+    if (!("Notification" in window)) {
+        alert("Seu navegador não suporta notificações.");
+        return;
     }
+
+    try {
+        const permission = await Notification.requestPermission();
+        if (permission === "granted") {
+            setShowNotificationPrompt(false);
+            new Notification("Notificações Ativadas! 🚀", { 
+                body: "Você será avisado a cada nova venda.",
+                icon: 'https://cdn-icons-png.flaticon.com/512/1077/1077114.png'
+            });
+            playNotificationSound();
+        }
+    } catch (e) {
+        console.error("Error requesting permission", e);
+    }
+  };
+
+  const playNotificationSound = () => {
+     const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2000/2000-preview.mp3");
+     audio.play().catch(e => console.log("Audio play failed", e));
   };
 
   const triggerBrowserNotification = (title: string, body: string) => {
     if (Notification.permission === "granted") {
-      new Notification(title, { body, icon: 'https://cdn-icons-png.flaticon.com/512/1077/1077114.png' });
-      // Play sound
-      const audio = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
-      audio.play().catch(e => console.log("Audio play failed", e));
+      try {
+        new Notification(title, { body, icon: 'https://cdn-icons-png.flaticon.com/512/1077/1077114.png' });
+        playNotificationSound();
+      } catch (e) {
+        console.error("Notification trigger failed", e);
+      }
     }
   };
 
-  // --- FILTRAGEM POR DATA ---
+  const fetchNotifications = async () => {
+      const { data } = await supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(20);
+      if (data) {
+          setNotifications(data);
+          setUnreadCount(data.filter(n => !n.read).length);
+      }
+  };
+
+  const markNotificationsRead = async () => {
+      await supabase.from('notifications').update({ read: true }).eq('read', false);
+      setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+      setUnreadCount(0);
+  };
+
+  const addNotificationToDB = async (title: string, message: string) => {
+      // Insert into DB for persistence
+      try {
+          await supabase.from('notifications').insert({
+              user_id: session.user.id,
+              title,
+              message
+          });
+          // Optimistic UI update handled by Realtime subscription on notifications table
+      } catch (e) {
+          console.error("Failed to persist notification", e);
+      }
+  };
+
+  // --- FILTRAGEM POR DATA & PESQUISA ---
   const getFilteredSales = () => {
     const now = new Date();
-    return sales.filter(sale => {
+    let result = sales;
+
+    // Filter by Date
+    result = result.filter(sale => {
       const saleDate = new Date(sale.created_at);
-      
-      if (dateRange === 'today') {
-        return saleDate.getDate() === now.getDate() && 
-               saleDate.getMonth() === now.getMonth() && 
-               saleDate.getFullYear() === now.getFullYear();
-      }
-      if (dateRange === '7days') {
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(now.getDate() - 7);
-        return saleDate >= sevenDaysAgo;
-      }
-      if (dateRange === '30days') {
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(now.getDate() - 30);
-        return saleDate >= thirtyDaysAgo;
-      }
-      if (dateRange === 'year') {
-        return saleDate.getFullYear() === now.getFullYear();
-      }
-      return true; // All
+      if (dateRange === 'today') return saleDate.getDate() === now.getDate() && saleDate.getMonth() === now.getMonth() && saleDate.getFullYear() === now.getFullYear();
+      if (dateRange === '7days') { const d = new Date(); d.setDate(now.getDate() - 7); return saleDate >= d; }
+      if (dateRange === '30days') { const d = new Date(); d.setDate(now.getDate() - 30); return saleDate >= d; }
+      if (dateRange === 'year') return saleDate.getFullYear() === now.getFullYear();
+      return true;
     });
+
+    // Filter by Search Query (ID)
+    if (searchQuery) {
+        result = result.filter(s => s.id.toLowerCase().includes(searchQuery.toLowerCase()) || s.product_name.toLowerCase().includes(searchQuery.toLowerCase()));
+    }
+
+    return result;
   };
 
-  const filteredSales = useMemo(() => getFilteredSales(), [sales, dateRange]);
-
+  const filteredSales = useMemo(() => getFilteredSales(), [sales, dateRange, searchQuery]);
   const filteredApprovedSales = filteredSales.filter(s => s.status === 'approved');
 
-  // --- HELPER PARA CALCULAR ESTATISTICAS POR PRODUTO ---
-  const getProductStats = (productId: string) => {
-      const productSales = sales.filter(s => s.product_id === productId && s.status === 'approved');
-      const count = productSales.length;
-      const revenue = productSales.reduce((acc, curr) => acc + curr.amount, 0);
-      return { count, revenue };
-  };
-
-  // Helper Functions
+  // --- HELPER PARA CALCULAR ESTATISTICAS ---
   const getGreeting = () => {
     const hour = new Date().getHours();
     if (hour < 12) return 'Bom dia';
@@ -217,16 +273,24 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
     return 'Boa noite';
   };
 
+  // NOVA LÓGICA DE RECEITA LÍQUIDA: Total Bruto - (8% + 8MT)
+  const calculateNetRevenue = (salesData: Sale[]) => {
+      return salesData.filter(s => s.status === 'approved').reduce((acc, curr) => {
+          const fee = (curr.amount * 0.08) + 8;
+          return acc + (curr.amount - fee);
+      }, 0);
+  };
+
   const calculateGrossRevenue = (salesData: Sale[]) => {
       return salesData.filter(s => s.status === 'approved').reduce((acc, curr) => acc + curr.amount, 0);
   };
 
-  const calculateNetRevenue = (salesData: Sale[]) => {
-      return salesData.filter(s => s.status === 'approved').reduce((acc, curr) => {
-          // 4.9% + 5MT fee logic
-          const fee = (curr.amount * 0.049) + 5;
-          return acc + (curr.amount - fee);
-      }, 0);
+  // CVR Calculation: (Vendas Aprovadas / Total Views) * 100
+  const calculateCVR = () => {
+      const totalViews = products.reduce((acc, p) => acc + (p.views_count || 0), 0);
+      const totalApprovedSales = sales.filter(s => s.status === 'approved').length;
+      if (totalViews === 0) return 0;
+      return ((totalApprovedSales / totalViews) * 100).toFixed(1);
   };
 
   const changeTab = (tab: Tab) => {
@@ -239,78 +303,58 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
   };
 
   const fetchData = async () => {
-    // Silent update (do not set global loading to true to avoid flicker)
     try {
-        const { data: salesData } = await supabase
-        .from('sales')
-        .select('*')
-        .eq('user_id', session.user.id)
-        .order('created_at', { ascending: false });
+        const { data: salesData } = await supabase.from('sales').select('*').eq('user_id', session.user.id).order('created_at', { ascending: false });
+        if (salesData) setSales(salesData);
 
-        if (salesData) {
-            setSales(prevSales => {
-                // Check if data actually changed to avoid unnecessary rerenders if possible, 
-                // but for now simple replacement ensures freshness.
-                // We could implement deep comparison here if performance degrades.
-                return JSON.stringify(salesData) !== JSON.stringify(prevSales) ? salesData : prevSales;
-            });
-        }
-
-        const { data: productsData } = await supabase
-          .from('products')
-          .select('*')
-          .eq('user_id', session.user.id)
-          .order('created_at', { ascending: false });
-
+        const { data: productsData } = await supabase.from('products').select('*').eq('user_id', session.user.id).order('created_at', { ascending: false });
         if (productsData) setProducts(productsData);
 
-        const { data: linksData } = await supabase
-        .from('payment_links')
-        .select('*')
-        .eq('user_id', session.user.id)
-        .order('created_at', { ascending: false });
-        
+        const { data: linksData } = await supabase.from('payment_links').select('*').eq('user_id', session.user.id).order('created_at', { ascending: false });
         if (linksData) setPaymentLinks(linksData);
-
     } catch (e) {
         console.error("Error fetching data", e);
     }
   };
 
   useEffect(() => {
-    // Initial Load
     const initialLoad = async () => {
         setLoading(true);
         await fetchData();
+        await fetchNotifications();
         setLoading(false);
-        requestNotificationPermission();
+        if ("Notification" in window && Notification.permission === "default") {
+            setShowNotificationPrompt(true);
+        }
     };
     initialLoad();
 
-    // 1. Polling Mechanism: Refresh data every 5 seconds
-    const intervalId = setInterval(() => {
-        fetchData();
-    }, 5000); // 5 seconds polling
+    const intervalId = setInterval(() => { fetchData(); }, 2000); 
     
-    // 2. Realtime Subscriptions
+    // Realtime Subscriptions
     const channel = supabase.channel('dashboard_updates')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `user_id=eq.${session.user.id}` }, (payload) => {
-         fetchData(); // Just refetch all to be safe and simple
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `user_id=eq.${session.user.id}` }, () => fetchData())
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${session.user.id}` }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+             const newNotif = payload.new as AppNotification;
+             setNotifications(prev => [newNotif, ...prev]);
+             setUnreadCount(prev => prev + 1);
+        }
     })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'sales', filter: `user_id=eq.${session.user.id}` }, (payload) => {
-         // Handle Notification
          if (payload.eventType === 'INSERT') {
              const newSale = payload.new as Sale;
              setSales(prev => [newSale, ...prev]);
              if (newSale.status === 'approved') {
-                 triggerBrowserNotification("Nova Venda Aprovada! 💰", `Você recebeu ${newSale.amount} MT de ${newSale.customer_name || 'um cliente'}.`);
+                 triggerBrowserNotification("Nova Venda Aprovada! 💰", `Você recebeu ${newSale.amount} MT.`);
+                 addNotificationToDB("Venda Aprovada!", `Venda de ${newSale.product_name} no valor de ${newSale.amount} MT confirmada. ID: ${newSale.id.slice(0,8)}`);
              }
          } else if (payload.eventType === 'UPDATE') {
              const updatedSale = payload.new as Sale;
              setSales(prev => prev.map(s => s.id === updatedSale.id ? updatedSale : s));
-             // Trigger notification if status changed to approved
              if (updatedSale.status === 'approved' && (payload.old as Sale)?.status !== 'approved') {
-                 triggerBrowserNotification("Pagamento Confirmado! ✅", `A venda de ${updatedSale.amount} MT foi aprovada com sucesso.`);
+                 triggerBrowserNotification("Pagamento Confirmado! ✅", `${updatedSale.amount} MT confirmados.`);
+                 addNotificationToDB("Pagamento Confirmado", `A venda #${updatedSale.id.slice(0,8)} foi aprovada.`);
              }
          }
     })
@@ -322,333 +366,143 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
     };
   }, []);
 
-  // --- ACTIONS ---
-
+  // --- ACTIONS (Keeping generateLink, delete, product management mostly same logic) ---
   const generateLink = async (prodId?: string) => {
     const targetId = prodId || selectedProductIdForLink;
     if (!targetId) return;
-
     setIsCreatingLink(true);
     try {
         const product = products.find(p => p.id === targetId);
         if (!product) throw new Error("Produto não encontrado");
-
         const baseUrl = window.location.origin;
-
-        const newLinkPayload = {
-            user_id: session.user.id,
-            product_id: product.id,
-            product_name: product.name,
-            url: 'Gerando link...',
-        };
-
+        const newLinkPayload = { user_id: session.user.id, product_id: product.id, product_name: product.name, url: 'Gerando link...' };
         const { data, error } = await supabase.from('payment_links').insert([newLinkPayload]).select();
-
         if (error) throw error;
-        if (!data || data.length === 0) throw new Error("Falha ao criar o registro do link");
-
         const createdLink = data[0]; 
         const finalUrl = `${baseUrl}/p/${product.id}?ref=${createdLink.id}`;
-        
-        const { error: updateError } = await supabase
-            .from('payment_links')
-            .update({ url: finalUrl })
-            .eq('id', createdLink.id);
-            
-        if (updateError) {
-             console.error("Link update failed:", updateError);
-             alert("O link foi criado mas ocorreu um erro ao salvar a URL final. Por favor, verifique se você rodou o script SQL de permissões.");
-             throw updateError;
-        }
-        
+        await supabase.from('payment_links').update({ url: finalUrl }).eq('id', createdLink.id);
         const finalLinkObject = { ...createdLink, url: finalUrl };
-
         await new Promise(resolve => setTimeout(resolve, 1500));
-
         setPaymentLinks(prev => [finalLinkObject, ...prev]);
         setSelectedProductIdForLink('');
         if (activeTab !== 'links') changeTab('links');
-
     } catch (e: any) {
-        console.error("Link Generation Error:", e);
-        if (!e.message.includes("permissões")) {
-           alert("Erro ao gerar link: " + e.message);
-        }
-    } finally {
-        setIsCreatingLink(false);
-    }
+        if (!e.message.includes("permissões")) alert("Erro ao gerar link: " + e.message);
+    } finally { setIsCreatingLink(false); }
   };
-
-  const openDeleteModal = (type: 'product' | 'link', id: string, name: string) => {
-      setDeleteModal({ isOpen: true, type, id, title: name });
-  };
-
+  
+  const openDeleteModal = (type: 'product' | 'link', id: string, name: string) => setDeleteModal({ isOpen: true, type, id, title: name });
+  
   const confirmDelete = async () => {
       const { type, id } = deleteModal;
       if (!id || !type) return;
-
       setDeleteModal({ ...deleteModal, isOpen: false });
-
       const previousProducts = [...products];
       const previousLinks = [...paymentLinks];
-
-      if (type === 'link') {
-          setPaymentLinks(prev => prev.filter(item => item.id !== id));
-      } else {
-          setProducts(prev => prev.filter(item => item.id !== id));
-          setPaymentLinks(prev => prev.filter(item => item.product_id !== id));
-      }
-
+      if (type === 'link') setPaymentLinks(prev => prev.filter(item => item.id !== id));
+      else { setProducts(prev => prev.filter(item => item.id !== id)); setPaymentLinks(prev => prev.filter(item => item.product_id !== id)); }
       try {
-          if (type === 'link') {
-              const { error } = await supabase.from('payment_links').delete().eq('id', id).select();
-              if (error) throw error;
-          } else {
-              await supabase.from('payment_links').delete().eq('product_id', id);
-              const { error } = await supabase.from('products').delete().eq('id', id).select();
-              if (error) throw error;
-          }
+          if (type === 'link') await supabase.from('payment_links').delete().eq('id', id);
+          else { await supabase.from('payment_links').delete().eq('product_id', id); await supabase.from('products').delete().eq('id', id); }
       } catch (error: any) {
-          console.error("Delete failed:", error);
           alert(`Falha ao excluir: ${error.message}`);
-          setProducts(previousProducts);
-          setPaymentLinks(previousLinks);
-          fetchData();
+          setProducts(previousProducts); setPaymentLinks(previousLinks); fetchData();
       }
   };
 
-  const handleOpenNewProduct = () => {
-    setNewProduct({
-        name: '', category: 'ebooks', description: '', price: 0, status: 'draft',
-        is_limited_time: false, image_url: null, has_offer: false, redemption_link: ''
-    });
-    setEditingId(null);
-    setProductFormStep(1);
-    setShowProductModal(true);
-  };
-
-  const handleEditProduct = (product: Product) => {
-    setNewProduct({ ...product });
-    setEditingId(product.id);
-    setProductFormStep(1);
-    setShowProductModal(true);
-  };
-
-  const handleGenerateDescriptionAI = async () => {
-    if (!newProduct.name) return alert("Digite o nome do produto primeiro.");
-    
-    setIsGeneratingAI(true);
-    try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        
-        const prompt = `
-          Atue como um especialista em Copywriting para produtos digitais.
-          Escreva uma descrição curta, persuasiva e focada em vendas (máximo 300 caracteres) para um produto chamado: "${newProduct.name}".
-          Categoria: ${newProduct.category}.
-          Público: Moçambique.
-          Use gatilhos mentais e emojis. Não coloque aspas na resposta.
-        `;
-
-        const result = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt
-        });
-        const text = result.text;
-        
-        if (text) {
-          setNewProduct(p => ({ ...p, description: text.trim() }));
-        }
-    } catch (e: any) {
-        console.error(e);
-        const descriptions = [
-            `🚀 Domine ${newProduct.name} hoje mesmo! O guia definitivo para quem quer resultados reais em Moçambique.`,
-            `💡 Transforme sua vida com ${newProduct.name}. Conteúdo prático, direto ao ponto e acessível. Compre agora!`
-        ];
-        setNewProduct(p => ({ ...p, description: descriptions[Math.floor(Math.random() * descriptions.length)] }));
-        alert("IA indisponível no momento. Geramos uma descrição padrão.");
-    } finally {
-        setIsGeneratingAI(false);
-    }
-  };
-
-  const handleProductImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-        const reader = new FileReader();
-        reader.onload = (ev) => setNewProduct(p => ({ ...p, image_url: ev.target?.result as string }));
-        reader.readAsDataURL(file);
-    }
-  };
-
+  const handleOpenNewProduct = () => { setNewProduct({ name: '', category: 'ebooks', description: '', price: 0, status: 'draft', is_limited_time: false, image_url: null, has_offer: false, redemption_link: '' }); setEditingId(null); setProductFormStep(1); setShowProductModal(true); };
+  const handleEditProduct = (product: Product) => { setNewProduct({ ...product }); setEditingId(product.id); setProductFormStep(1); setShowProductModal(true); };
+  const handleProductImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => { const file = e.target.files?.[0]; if (file) { const reader = new FileReader(); reader.onload = (ev) => setNewProduct(p => ({ ...p, image_url: ev.target?.result as string })); reader.readAsDataURL(file); }};
   const saveProduct = async (requestedStatus: ProductStatus = 'draft') => {
     if (!newProduct.name || !newProduct.price) return alert("Nome e Preço obrigatórios.");
     setIsSavingProduct(true);
     try {
         const finalStatus = requestedStatus === 'active' ? 'analyzing' : requestedStatus;
         const payload = { user_id: session.user.id, ...newProduct, status: finalStatus };
-
-        let savedData: Product | null = null;
-
-        if (editingId) {
-             const { data } = await supabase.from('products').update(payload).eq('id', editingId).select();
-             if (data && data.length > 0) {
-                 savedData = data[0];
-                 setProducts(prev => prev.map(p => p.id === editingId ? savedData! : p));
-             }
-        } else {
-             const { data } = await supabase.from('products').insert([payload]).select();
-             if (data && data.length > 0) {
-                 savedData = data[0];
-                 setProducts(prev => [savedData!, ...prev]);
-             }
-        }
-
+        if (editingId) { await supabase.from('products').update(payload).eq('id', editingId); setProducts(prev => prev.map(p => p.id === editingId ? { ...p, ...payload } as Product : p)); } 
+        else { const { data } = await supabase.from('products').insert([payload]).select(); if (data) setProducts(prev => [data[0] as Product, ...prev]); }
         setShowProductModal(false);
-        
-        if (finalStatus === 'analyzing' && savedData) {
-             setTimeout(async () => {
-                 await supabase.from('products').update({ status: 'active' }).eq('id', savedData!.id);
-                 setProducts(prev => prev.map(p => p.id === savedData!.id ? { ...p, status: 'active' } : p));
-             }, 3000);
-        }
-    } catch (e: any) {
-        alert("Erro: " + e.message);
-    } finally {
-        setIsSavingProduct(false);
-    }
+        if (finalStatus === 'analyzing') setTimeout(async () => { await supabase.from('products').update({ status: 'active' }).eq('name', newProduct.name); fetchData(); }, 3000);
+    } catch (e: any) { alert("Erro: " + e.message); } finally { setIsSavingProduct(false); }
+  };
+  const handleGenerateDescriptionAI = async () => {
+    if (!newProduct.name) return alert("Digite o nome do produto primeiro.");
+    setIsGeneratingAI(true);
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        const result = await ai.models.generateContent({ model: "gemini-2.5-flash", contents: `Atue como um especialista em Copywriting... Produto: "${newProduct.name}". Categoria: ${newProduct.category}. Público: Moçambique.` });
+        if (result.text) setNewProduct(p => ({ ...p, description: result.text!.trim() }));
+    } catch (e) { alert("IA indisponível no momento."); } finally { setIsGeneratingAI(false); }
   };
 
-  const getStatusBadge = (status: ProductStatus) => {
-      const styles = {
-          active: "bg-emerald-100 text-emerald-700 border-emerald-200",
-          analyzing: "bg-amber-100 text-amber-700 border-amber-200",
-          rejected: "bg-red-100 text-red-700 border-red-200",
-          draft: "bg-slate-100 text-slate-600 border-slate-200"
-      };
-      const labels = {
-          active: "Ativo",
-          analyzing: "Analisando",
-          rejected: "Rejeitado",
-          draft: "Rascunho"
-      };
-      return (
-          <span className={`px-2.5 py-1 rounded-full text-[10px] uppercase tracking-wider font-bold border flex items-center gap-1.5 w-fit ${styles[status]}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${status === 'analyzing' ? 'animate-pulse bg-current' : 'bg-current'}`}></span>
-              {labels[status]}
-          </span>
-      );
-  };
-
-  // --- CHART GENERATION (Neo-Glass / SVG) ---
+  // --- NEW RENDER HELPERS ---
   const renderNeoGlassChart = () => {
-    // Generate data based on filtered sales (defaulting to last 7-10 data points for smoothness)
-    // For specific date ranges, we group data.
     const daysToShow = dateRange === 'today' ? 24 : dateRange === '7days' ? 7 : 12;
     const dataPoints = [];
-    
-    // Simple logic to group sales by day/hour
     for (let i = 0; i < daysToShow; i++) {
         const date = new Date();
         if (dateRange === 'today') {
-           // By Hour
            date.setHours(date.getHours() - (daysToShow - 1 - i));
-           const amount = sales
-             .filter(s => s.status === 'approved' && new Date(s.created_at).getHours() === date.getHours() && new Date(s.created_at).toDateString() === new Date().toDateString())
-             .reduce((acc, curr) => acc + curr.amount, 0);
+           const amount = sales.filter(s => s.status === 'approved' && new Date(s.created_at).getHours() === date.getHours() && new Date(s.created_at).toDateString() === new Date().toDateString()).reduce((acc, curr) => acc + curr.amount, 0);
            dataPoints.push({ label: `${date.getHours()}h`, value: amount });
         } else {
-           // By Day
            date.setDate(date.getDate() - (daysToShow - 1 - i));
-           const amount = sales
-             .filter(s => s.status === 'approved' && new Date(s.created_at).toDateString() === date.toDateString())
-             .reduce((acc, curr) => acc + curr.amount, 0);
+           const amount = sales.filter(s => s.status === 'approved' && new Date(s.created_at).toDateString() === date.toDateString()).reduce((acc, curr) => acc + curr.amount, 0);
            dataPoints.push({ label: date.toLocaleDateString('pt-MZ', { day: '2-digit' }), value: amount });
         }
     }
-
-    const maxValue = Math.max(...dataPoints.map(d => d.value), 100); // Minimum scale
-    const height = 200;
-    const width = 600; // viewBox width
+    const maxValue = Math.max(...dataPoints.map(d => d.value), 100);
+    const height = 250;
+    const width = 800;
     const padding = 20;
     const chartW = width - (padding * 2);
     const chartH = height - (padding * 2);
-
-    // Calculate Coordinates
-    const points = dataPoints.map((d, i) => {
-        const x = padding + (i / (dataPoints.length - 1)) * chartW;
-        const y = height - padding - (d.value / maxValue) * chartH;
-        return `${x},${y}`;
-    }).join(' ');
-
-    // Fill Path (for gradient area)
+    const points = dataPoints.map((d, i) => `${padding + (i / (dataPoints.length - 1)) * chartW},${height - padding - (d.value / maxValue) * chartH}`).join(' ');
     const fillPath = `${padding},${height-padding} ${points} ${width-padding},${height-padding}`;
 
     return (
-        <div className="relative h-64 w-full bg-slate-900 rounded-2xl overflow-hidden shadow-2xl border border-slate-700/50 group">
-             {/* Background Effects */}
-             <div className="absolute top-[-50%] left-[-20%] w-[500px] h-[500px] bg-purple-600/30 rounded-full blur-[80px] opacity-40 animate-pulse-slow"></div>
-             <div className="absolute bottom-[-20%] right-[-10%] w-[400px] h-[400px] bg-blue-600/20 rounded-full blur-[60px] opacity-40"></div>
-             
-             {/* Content */}
+        <div className="relative h-72 w-full bg-white rounded-3xl overflow-hidden shadow-card border border-slate-100 group">
+             {/* New Blue/White SaaS Theme */}
              <div className="relative z-10 p-6 flex flex-col h-full">
                  <div className="flex justify-between items-start mb-4">
                      <div>
-                        <h3 className="text-slate-100 font-bold text-lg flex items-center gap-2">
-                             <TrendingUp size={18} className="text-cyan-400" /> Receita
+                        <h3 className="text-slate-800 font-bold text-lg flex items-center gap-2">
+                             <div className="w-8 h-8 rounded-lg bg-brand-50 flex items-center justify-center text-brand-600">
+                                <TrendingUp size={18} /> 
+                             </div>
+                             Receita
                         </h3>
-                        <p className="text-slate-400 text-xs font-medium uppercase tracking-wider">
-                           {dateRange === 'today' ? 'Hoje' : dateRange === '7days' ? 'Últimos 7 dias' : 'Período Selecionado'}
-                        </p>
                      </div>
                      <div className="text-right">
-                         <div className="text-2xl font-bold text-white tracking-tight drop-shadow-md">
+                         <div className="text-3xl font-bold text-slate-900 tracking-tight">
                              {filteredApprovedSales.reduce((acc, curr) => acc + curr.amount, 0).toLocaleString()} MT
                          </div>
                      </div>
                  </div>
 
-                 {/* SVG Chart */}
                  <div className="flex-1 w-full min-h-0 relative">
                      <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible" preserveAspectRatio="none">
                          <defs>
-                             <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-                                 <stop offset="0%" stopColor="#22d3ee" stopOpacity="0.5" />
-                                 <stop offset="100%" stopColor="#22d3ee" stopOpacity="0" />
+                             <linearGradient id="blueGradient" x1="0" y1="0" x2="0" y2="1">
+                                 <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.2" />
+                                 <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
                              </linearGradient>
-                             <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-                                <feGaussianBlur stdDeviation="4" result="coloredBlur" />
-                                <feMerge>
-                                    <feMergeNode in="coloredBlur" />
-                                    <feMergeNode in="SourceGraphic" />
-                                </feMerge>
-                             </filter>
                          </defs>
-                         
-                         {/* Grid Lines */}
-                         <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="#334155" strokeWidth="1" />
-                         <line x1={padding} y1={padding} x2={width - padding} y2={padding} stroke="#334155" strokeWidth="1" strokeDasharray="4 4" opacity="0.3" />
-
-                         {/* Area Fill */}
-                         <polygon points={fillPath} fill="url(#chartGradient)" />
-
-                         {/* Line */}
-                         <polyline points={points} fill="none" stroke="#22d3ee" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" filter="url(#glow)" />
-                         
-                         {/* Dots */}
+                         <line x1={padding} y1={height - padding} x2={width - padding} y2={height - padding} stroke="#e2e8f0" strokeWidth="1" />
+                         <polygon points={fillPath} fill="url(#blueGradient)" />
+                         <polyline points={points} fill="none" stroke="#3b82f6" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
                          {dataPoints.map((d, i) => {
                              const x = padding + (i / (dataPoints.length - 1)) * chartW;
                              const y = height - padding - (d.value / maxValue) * chartH;
                              return (
-                                 <circle key={i} cx={x} cy={y} r="3" fill="#fff" stroke="#0ea5e9" strokeWidth="2" className="opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                                 <circle key={i} cx={x} cy={y} r="4" fill="#fff" stroke="#3b82f6" strokeWidth="2" className="opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                              );
                          })}
                      </svg>
                  </div>
-                 
-                 {/* X Axis Labels */}
                  <div className="flex justify-between mt-2 px-1">
                      {dataPoints.filter((_, i) => i % Math.ceil(dataPoints.length / 6) === 0).map((d, i) => (
-                         <span key={i} className="text-[10px] text-slate-400 font-mono">{d.label}</span>
+                         <span key={i} className="text-[10px] text-slate-400 font-medium">{d.label}</span>
                      ))}
                  </div>
              </div>
@@ -656,576 +510,455 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
     );
   };
 
+  // Helper for Product Status Badge
+  const getStatusBadge = (status: ProductStatus) => {
+      switch (status) {
+          case 'active': return <span className="bg-green-100 text-green-700 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide">Ativo</span>;
+          case 'analyzing': return <span className="bg-blue-100 text-blue-700 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide flex items-center gap-1"><Loader2 size={10} className="animate-spin"/> Análise</span>;
+          case 'draft': return <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide">Rascunho</span>;
+          case 'rejected': return <span className="bg-red-100 text-red-700 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide">Recusado</span>;
+          default: return <span className="bg-slate-100 text-slate-500 px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wide">{status}</span>;
+      }
+  };
+
+  // Helper for Product Stats
+  const getProductStats = (productId: string) => {
+      const productSales = sales.filter(s => s.product_id === productId && s.status === 'approved');
+      const count = productSales.length;
+      const revenue = productSales.reduce((acc, curr) => acc + curr.amount, 0);
+      return { count, revenue };
+  };
+
   return (
-    <div className="min-h-screen bg-slate-50 flex font-sans text-slate-900">
+    <div className="min-h-screen bg-[#F5F6F8] font-sans text-slate-900">
       
-      {deleteModal.isOpen && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
-              <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-glow animate-scaleIn border border-white/20">
-                  <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center mb-4 text-red-600 mx-auto">
-                      <AlertTriangle size={24}/>
+      {/* NOTIFICATION PROMPT */}
+      {showNotificationPrompt && (
+          <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[100] animate-slideDown w-full max-w-md px-4">
+              <div className="bg-slate-900 text-white p-4 rounded-xl shadow-2xl flex items-center justify-between gap-4 border border-slate-700">
+                  <div className="flex items-center gap-3">
+                      <div className="bg-brand-600 p-2 rounded-lg animate-pulse">
+                          <BellRing size={20} />
+                      </div>
+                      <div>
+                          <p className="font-bold text-sm">Ativar notificações?</p>
+                          <p className="text-xs text-slate-400">Receba alertas de vendas na hora.</p>
+                      </div>
                   </div>
-                  <h3 className="text-xl font-bold text-center mb-2 text-slate-900">Excluir {deleteModal.type === 'product' ? 'Produto' : 'Link'}?</h3>
-                  <p className="text-center text-slate-500 mb-6 text-sm font-medium">
-                      Você está prestes a remover <span className="font-bold text-slate-800">"{deleteModal.title}"</span>. Esta ação não pode ser desfeita.
-                  </p>
-                  <div className="flex gap-3">
-                      <button 
-                        onClick={() => setDeleteModal({...deleteModal, isOpen: false})} 
-                        className="flex-1 py-3 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold rounded-xl transition-colors"
-                      >
-                          Cancelar
-                      </button>
-                      <button 
-                        onClick={confirmDelete} 
-                        className="flex-1 py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl transition-colors shadow-lg shadow-red-200"
-                      >
-                          Sim, Excluir
-                      </button>
+                  <div className="flex items-center gap-2">
+                      <button onClick={() => setShowNotificationPrompt(false)} className="text-xs font-bold text-slate-400 hover:text-white px-2 py-1">Depois</button>
+                      <button onClick={handleEnableNotifications} className="text-xs font-bold bg-white text-slate-900 px-3 py-1.5 rounded-lg hover:bg-slate-200 transition-colors">Ativar</button>
                   </div>
               </div>
           </div>
       )}
 
-      {/* Sidebar */}
-      <aside className={`fixed lg:static inset-y-0 left-0 w-72 bg-white border-r border-slate-100 flex flex-col z-50 transition-transform duration-300 lg:transform-none ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="p-8 border-b border-slate-50">
+      {/* HEADER SUPERIOR NOVO */}
+      <header className="fixed top-0 left-0 right-0 h-20 bg-white border-b border-slate-200 z-40 flex items-center justify-between px-6 lg:px-10">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-brand-600 rounded-xl flex items-center justify-center text-white shadow-glow">
-              <Wallet size={20} />
-            </div>
-            <div>
-                <span className="block text-xl font-bold text-slate-900 leading-none">Pay<span className="text-brand-600">Easy</span></span>
-                <span className="text-xs text-brand-300 font-medium tracking-wide">Dashboard</span>
-            </div>
+             <div className="lg:hidden p-2 bg-slate-50 rounded-lg text-slate-600" onClick={() => setMobileMenuOpen(true)}>
+                 <Menu size={24}/>
+             </div>
+             <div className="flex items-center gap-2">
+                <div className="w-10 h-10 bg-brand-600 rounded-xl flex items-center justify-center text-white shadow-glow">
+                  <Wallet size={20} />
+                </div>
+                <div className="hidden md:block">
+                    <span className="block text-xl font-bold text-slate-900 leading-none">Pay<span className="text-brand-600">Easy</span></span>
+                </div>
+             </div>
           </div>
-        </div>
-        
-        <div className="lg:hidden p-4 flex justify-end">
-             <button onClick={() => setMobileMenuOpen(false)} className="p-2 bg-slate-50 rounded-full text-slate-500"><X size={20}/></button>
-        </div>
 
-        <nav className="flex-1 p-6 space-y-2">
-          {[
-            { id: 'overview', icon: LayoutDashboard, label: 'Visão Geral' },
-            { id: 'sales', icon: TrendingUp, label: 'Vendas' },
-            { id: 'products', icon: ShoppingBag, label: 'Meus Produtos' },
-            { id: 'links', icon: LinkIcon, label: 'Links Criados' },
-            { id: 'settings', icon: Settings, label: 'Configurações' },
-          ].map((item) => (
-            <button 
-                key={item.id}
-                onClick={() => changeTab(item.id as Tab)} 
-                className={`w-full flex items-center gap-4 px-4 py-3.5 rounded-xl transition-all font-medium text-sm ${activeTab === item.id ? 'bg-brand-50 text-brand-700 border border-brand-100 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}
-            >
-                <item.icon size={20} className={activeTab === item.id ? 'text-brand-600' : 'text-slate-400'} /> 
-                {item.label}
-            </button>
-          ))}
-        </nav>
-
-        <div className="p-6 border-t border-slate-50 bg-slate-50/50">
-            <div className="flex items-center gap-3 mb-4">
-                <div className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center text-brand-700 font-bold text-sm shadow-sm">
-                    {profile.fullName.charAt(0)}
-                </div>
-                <div className="overflow-hidden">
-                    <p className="text-sm font-bold text-slate-900 truncate">{profile.fullName}</p>
-                    <p className="text-xs text-slate-500 truncate">Plano Grátis</p>
-                </div>
-            </div>
-            <button onClick={onLogout} className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs text-slate-600 bg-white border border-slate-200 hover:bg-red-50 hover:text-red-600 hover:border-red-100 rounded-lg transition-all font-bold uppercase tracking-wide">
-                <LogOut size={14} /> Sair da conta
-            </button>
-        </div>
-      </aside>
-      
-      {/* Mobile Topbar */}
-      <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-white/90 backdrop-blur-md border-b border-slate-100 flex items-center justify-between px-4 z-40">
-         <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-brand-600 rounded-lg flex items-center justify-center text-white">
-              <Wallet size={18} />
-            </div>
-            <span className="text-lg font-bold">Pay<span className="text-brand-600">Easy</span></span>
-         </div>
-         <button onClick={() => setMobileMenuOpen(!mobileMenuOpen)} className="p-2 text-slate-600 bg-slate-50 rounded-lg">
-             <Menu size={24}/>
-         </button>
-      </div>
-
-      <main className="flex-1 p-6 lg:p-10 mt-16 lg:mt-0 overflow-y-auto w-full max-w-7xl mx-auto relative">
-        
-        {/* TAB LOADING OVERLAY */}
-        {isTabLoading && (
-            <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-30 flex items-center justify-center rounded-3xl animate-fadeIn">
-                <div className="flex flex-col items-center">
-                    <Loader2 size={40} className="text-brand-600 animate-spin mb-4" />
-                    <p className="text-slate-500 font-medium animate-pulse">Carregando dados...</p>
-                </div>
-            </div>
-        )}
-
-        {/* LINK CREATION LOADING OVERLAY */}
-        {isCreatingLink && (
-            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/70 backdrop-blur-md animate-fadeIn">
-                <div className="bg-white rounded-3xl p-8 flex flex-col items-center justify-center shadow-2xl border border-white/20 transform scale-100 animate-bounce-slow">
-                    <div className="relative">
-                        <div className="w-16 h-16 rounded-full border-4 border-brand-100 border-t-brand-600 animate-spin"></div>
-                        <div className="absolute inset-0 flex items-center justify-center">
-                            <LinkIcon size={20} className="text-brand-600" />
-                        </div>
-                    </div>
-                    <h3 className="text-xl font-bold text-slate-900 mt-6">Gerando Link...</h3>
-                    <p className="text-slate-500 text-sm mt-2 text-center max-w-xs">Criando sua página de checkout segura.</p>
-                </div>
-            </div>
-        )}
-
-        {activeTab === 'overview' && (
-          <div className="space-y-8 animate-fadeIn">
-            {/* Header with Date Filter */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <h1 className="text-3xl font-bold text-slate-900 tracking-tight">
-                    {getGreeting()}, {profile.fullName.split(' ')[0]}
-                </h1>
-                <p className="text-slate-500 mt-1 flex items-center gap-2 font-medium">
-                    <Calendar size={14} className="text-brand-400" /> 
-                    {new Date().toLocaleDateString('pt-MZ', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-                    <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse"><div className="w-1.5 h-1.5 rounded-full bg-green-600"></div>Ao Vivo</span>
-                </p>
+          {/* Search Bar */}
+          <div className="flex-1 max-w-md mx-6 hidden md:block">
+              <div className="relative">
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input 
+                    type="text" 
+                    placeholder="Pesquisar ID da transação..." 
+                    className="w-full pl-11 pr-4 py-2.5 bg-[#F5F6F8] border border-transparent focus:bg-white focus:border-brand-200 focus:ring-4 focus:ring-brand-50 rounded-xl outline-none transition-all text-sm font-medium"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
               </div>
-              
-              <div className="flex flex-col md:flex-row gap-3">
-                  {/* Date Filter Dropdown */}
-                  <div className="relative">
-                      <select 
-                        value={dateRange} 
-                        onChange={(e) => setDateRange(e.target.value as DateRange)}
-                        className="appearance-none bg-white border border-slate-200 text-slate-700 py-2.5 pl-4 pr-10 rounded-xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-500 hover:bg-slate-50 transition-all cursor-pointer"
-                      >
-                          <option value="today">Hoje</option>
-                          <option value="7days">Últimos 7 dias</option>
-                          <option value="30days">Últimos 30 dias</option>
-                          <option value="year">Este Ano</option>
-                          <option value="all">Todo Período</option>
-                      </select>
-                      <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                  </div>
+          </div>
 
-                  <button onClick={() => handleOpenNewProduct()} className="bg-gradient-to-r from-brand-500 to-brand-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:shadow-glow transition-all transform hover:-translate-y-0.5 flex items-center gap-2 shadow-lg shadow-brand-200 justify-center">
-                      <Plus size={18}/> Novo Produto
+          <div className="flex items-center gap-6">
+              {/* Notifications */}
+              <div className="relative">
+                  <button 
+                     className="relative p-2 text-slate-500 hover:text-brand-600 hover:bg-brand-50 rounded-full transition-colors"
+                     onClick={() => { setShowNotificationsDropdown(!showNotificationsDropdown); if(unreadCount > 0) markNotificationsRead(); }}
+                  >
+                      <Bell size={22} />
+                      {unreadCount > 0 && (
+                          <span className="absolute top-1.5 right-2 w-2.5 h-2.5 bg-red-500 border-2 border-white rounded-full"></span>
+                      )}
                   </button>
+                  {showNotificationsDropdown && (
+                      <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-2xl shadow-2xl border border-slate-100 overflow-hidden animate-slideDown z-50">
+                          <div className="p-4 border-b border-slate-50 bg-slate-50/50 flex justify-between items-center">
+                              <h4 className="font-bold text-slate-900">Notificações</h4>
+                              <button className="text-xs text-brand-600 font-bold hover:underline" onClick={() => setShowNotificationsDropdown(false)}>Fechar</button>
+                          </div>
+                          <div className="max-h-80 overflow-y-auto">
+                              {notifications.length === 0 ? (
+                                  <div className="p-8 text-center text-slate-400 text-sm">Sem notificações.</div>
+                              ) : (
+                                  notifications.map((notif) => (
+                                      <div key={notif.id} className={`p-4 border-b border-slate-50 hover:bg-slate-50 transition-colors ${!notif.read ? 'bg-blue-50/50' : ''}`}>
+                                          <div className="flex justify-between items-start mb-1">
+                                              <span className="font-bold text-slate-800 text-sm">{notif.title}</span>
+                                              <span className="text-[10px] text-slate-400">{new Date(notif.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                                          </div>
+                                          <p className="text-xs text-slate-500 leading-relaxed">{notif.message}</p>
+                                      </div>
+                                  ))
+                              )}
+                          </div>
+                      </div>
+                  )}
               </div>
-            </div>
-            
-            {/* Stats Cards (Dynamic based on filteredSales) */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-               {[
-                   { 
-                       label: "Receita Bruta", 
-                       value: `${calculateGrossRevenue(filteredSales).toLocaleString()} MT`, 
-                       icon: Wallet, 
-                       color: "text-brand-600", 
-                       bg: "bg-brand-50" 
-                   },
-                   { 
-                       label: "Vendas Aprovadas", 
-                       value: filteredApprovedSales.length.toString(), 
-                       icon: ShoppingBag, 
-                       color: "text-blue-600", 
-                       bg: "bg-blue-50" 
-                   },
-                   { 
-                       label: "Produtos Ativos", 
-                       value: products.filter(p => p.status === 'active').length.toString(), 
-                       icon: LayoutDashboard, 
-                       color: "text-purple-600", 
-                       bg: "bg-purple-50" 
-                   },
-                   {
-                       label: "Ticket Médio",
-                       value: filteredApprovedSales.length > 0 ? (filteredApprovedSales.reduce((acc, curr) => acc + curr.amount, 0) / filteredApprovedSales.length).toFixed(0) + ' MT' : '0 MT',
-                       icon: TrendingUp,
-                       color: "text-emerald-600",
-                       bg: "bg-emerald-50"
-                   }
-               ].map((stat, i) => (
-                   <div key={i} className="bg-white p-6 rounded-2xl shadow-card border border-slate-100 hover:border-brand-200 transition-all hover:shadow-lg group">
-                     <div className="flex items-center justify-between mb-4">
-                         <div className={`p-3 ${stat.bg} ${stat.color} rounded-xl group-hover:scale-110 transition-transform shadow-sm`}>
-                             <stat.icon size={24}/>
-                         </div>
-                     </div>
-                     <div className="text-3xl font-bold text-slate-900 tracking-tight mb-1">{stat.value}</div>
-                     <span className="text-sm font-medium text-slate-500">{stat.label}</span>
-                   </div>
-               ))}
-            </div>
 
-            {/* Charts Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                
-                {/* Neo-Glass Chart (Replaces old chart) */}
-                <div className="lg:col-span-2">
-                    {renderNeoGlassChart()}
-                </div>
-
-                {/* Payment Methods Chart */}
-                <div className="bg-white p-6 rounded-2xl shadow-card border border-slate-100">
-                     <div className="flex items-center justify-between mb-6">
-                        <h3 className="font-bold text-slate-900 flex items-center gap-2">
-                            <PieChart size={18} className="text-brand-600" /> Pagamentos
-                        </h3>
-                    </div>
-                    <div className="flex flex-col items-center justify-center h-52 gap-6">
-                         {/* Simple visual representation instead of complex chart lib */}
-                        <div className="w-full space-y-4">
-                            <div>
-                                <div className="flex justify-between text-xs font-bold mb-1">
-                                    <span className="text-slate-600 flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-red-500"></div> M-Pesa</span>
-                                    <span>{filteredSales.filter(s => s.payment_method === 'mpesa').length}</span>
-                                </div>
-                                <div className="w-full bg-slate-100 rounded-full h-2">
-                                    <div className="bg-red-500 h-2 rounded-full" style={{ width: `${filteredSales.length ? (filteredSales.filter(s => s.payment_method === 'mpesa').length / filteredSales.length) * 100 : 0}%` }}></div>
-                                </div>
-                            </div>
-                            <div>
-                                <div className="flex justify-between text-xs font-bold mb-1">
-                                    <span className="text-slate-600 flex items-center gap-1"><div className="w-2 h-2 rounded-full bg-orange-500"></div> e-Mola</span>
-                                    <span>{filteredSales.filter(s => s.payment_method === 'emola').length}</span>
-                                </div>
-                                <div className="w-full bg-slate-100 rounded-full h-2">
-                                    <div className="bg-orange-500 h-2 rounded-full" style={{ width: `${filteredSales.length ? (filteredSales.filter(s => s.payment_method === 'emola').length / filteredSales.length) * 100 : 0}%` }}></div>
-                                </div>
-                            </div>
-                        </div>
-                        <div className="text-center">
-                            <span className="text-2xl font-bold text-slate-900">{filteredSales.length}</span>
-                            <p className="text-xs text-slate-400 uppercase tracking-wide">Transações Totais</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            {/* Recent Sales Table */}
-            <div className="bg-white rounded-2xl shadow-card border border-slate-100 overflow-hidden">
-                <div className="p-6 border-b border-slate-50 flex justify-between items-center">
-                    <h3 className="font-bold text-slate-900 text-lg">Últimas Vendas</h3>
-                    <button onClick={() => changeTab('sales')} className="text-sm text-brand-600 font-bold hover:underline">Ver todas</button>
-                </div>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left border-collapse">
-                        <thead>
-                            <tr className="bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wide">
-                                <th className="p-4">ID Venda</th>
-                                <th className="p-4">Cliente</th>
-                                <th className="p-4">Produto</th>
-                                <th className="p-4">Valor</th>
-                                <th className="p-4">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody className="text-sm">
-                            {sales.length === 0 ? (
-                                <tr><td colSpan={5} className="p-8 text-center text-slate-400">Nenhuma venda registrada ainda.</td></tr>
-                            ) : (
-                                sales.slice(0, 5).map(sale => (
-                                    <tr key={sale.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                                        <td className="p-4 font-mono text-slate-400 text-xs">#{sale.id.slice(0, 8)}</td>
-                                        <td className="p-4">
-                                            <div className="font-bold text-slate-800">{sale.customer_name}</div>
-                                            <div className="text-xs text-slate-400">{sale.customer_phone || sale.customer_email}</div>
-                                        </td>
-                                        <td className="p-4 text-slate-600">{sale.product_name}</td>
-                                        <td className="p-4 font-bold text-slate-900">{sale.amount.toLocaleString()} MT</td>
-                                        <td className="p-4">
-                                            <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
-                                                sale.status === 'approved' ? 'bg-green-100 text-green-700' : 
-                                                sale.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 
-                                                'bg-red-100 text-red-700'
-                                            }`}>
-                                                {sale.status === 'approved' ? 'Sucesso' : sale.status === 'pending' ? 'Pendente' : 'Cancelado'}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+              {/* Profile */}
+              <div className="flex items-center gap-3 pl-6 border-l border-slate-100">
+                  <div className="text-right hidden md:block">
+                      <p className="text-sm font-bold text-slate-900 leading-tight">{profile.fullName.split(' ')[0]}</p>
+                      <button onClick={onLogout} className="text-[10px] text-slate-400 hover:text-red-500 font-medium">Sair</button>
+                  </div>
+                  <div className="w-10 h-10 rounded-full bg-slate-200 border-2 border-white shadow-sm overflow-hidden">
+                      {/* Avatar Placeholder */}
+                      <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-slate-200 to-slate-300 text-slate-500 font-bold">
+                          {profile.fullName.charAt(0)}
+                      </div>
+                  </div>
+              </div>
           </div>
-        )}
+      </header>
 
-        {/* ... Rest of tabs (Sales, Products, Links, Settings) remain largely similar, 
-            but inherit the 'isTabLoading' logic from the changeTab function 
-        */}
-
-        {activeTab === 'sales' && (
-            <div className="space-y-8 animate-fadeIn">
-                 {/* Reusing Filter Logic */}
-                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                  <div>
-                    <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Vendas</h1>
-                    <p className="text-slate-500 mt-1">Gerencie suas transações e acompanhe seu faturamento.</p>
+      {/* MOBILE MENU */}
+      {mobileMenuOpen && (
+          <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm lg:hidden" onClick={() => setMobileMenuOpen(false)}>
+              <div className="absolute left-0 top-0 bottom-0 w-64 bg-white p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
+                  <div className="flex items-center justify-between mb-8">
+                       <span className="text-xl font-bold">Menu</span>
+                       <button onClick={() => setMobileMenuOpen(false)}><X size={24}/></button>
                   </div>
-                  <div className="relative">
-                      <select 
-                        value={dateRange} 
-                        onChange={(e) => setDateRange(e.target.value as DateRange)}
-                        className="appearance-none bg-white border border-slate-200 text-slate-700 py-2 pl-4 pr-10 rounded-xl font-bold text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-brand-500 hover:bg-slate-50 transition-all cursor-pointer"
-                      >
-                          <option value="today">Hoje</option>
-                          <option value="7days">Últimos 7 dias</option>
-                          <option value="30days">Últimos 30 dias</option>
-                          <option value="all">Todo Período</option>
-                      </select>
-                      <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                  </div>
-                </div>
-
-                {/* Sales Metrics based on Filter */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                     <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-card">
-                         <div className="text-xs font-bold text-slate-400 uppercase mb-2">Vendas Aprovadas</div>
-                         <div className="text-2xl font-bold text-green-600">{filteredApprovedSales.length}</div>
-                     </div>
-                     <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-card">
-                         <div className="text-xs font-bold text-slate-400 uppercase mb-2">Receita Bruta</div>
-                         <div className="text-2xl font-bold text-slate-900">{calculateGrossRevenue(filteredSales).toLocaleString()} MT</div>
-                     </div>
-                     <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-card">
-                         <div className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-1">Receita Líquida <AlertCircle size={12} title="Descontando taxas da plataforma" /></div>
-                         <div className="text-2xl font-bold text-brand-600">{calculateNetRevenue(filteredSales).toLocaleString()} MT</div>
-                     </div>
-                      <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-card">
-                         <div className="text-xs font-bold text-slate-400 uppercase mb-2">Pendentes</div>
-                         <div className="text-2xl font-bold text-yellow-500">{filteredSales.filter(s => s.status === 'pending').length}</div>
-                     </div>
-                </div>
-
-                <div className="bg-white rounded-2xl shadow-card border border-slate-100 overflow-hidden">
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse">
-                            <thead>
-                                <tr className="bg-slate-50 text-xs font-bold text-slate-500 uppercase tracking-wide">
-                                    <th className="p-4">ID</th>
-                                    <th className="p-4">Cliente</th>
-                                    <th className="p-4">Produto</th>
-                                    <th className="p-4">Valor</th>
-                                    <th className="p-4">Status</th>
-                                </tr>
-                            </thead>
-                            <tbody className="text-sm">
-                                {filteredSales.length === 0 ? (
-                                    <tr><td colSpan={5} className="p-12 text-center text-slate-400 font-medium">Nenhuma venda encontrada neste período.</td></tr>
-                                ) : (
-                                    filteredSales.map(sale => (
-                                        <tr key={sale.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors group">
-                                            <td className="p-4 font-mono text-slate-400 text-xs">#{sale.id.slice(0, 8)}</td>
-                                            <td className="p-4">
-                                                <div className="font-bold text-slate-800">{sale.customer_name}</div>
-                                                <div className="text-xs text-slate-400">{sale.customer_phone || sale.customer_email}</div>
-                                            </td>
-                                            <td className="p-4 text-slate-600">{sale.product_name}</td>
-                                            <td className="p-4 font-bold text-slate-900">{sale.amount.toLocaleString()} MT</td>
-                                            <td className="p-4">
-                                                <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
-                                                    sale.status === 'approved' ? 'bg-green-100 text-green-700' : 
-                                                    sale.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
-                                                    'bg-red-100 text-red-700'
-                                                }`}>
-                                                    {sale.status === 'approved' ? 'Sucesso' : sale.status === 'pending' ? 'Pendente' : 'Cancelado'}
-                                                </span>
-                                            </td>
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        )}
-
-        {/* Keeping Products, Links, Settings mostly as is but they are inside the main container */}
-        {activeTab === 'products' && (
-          <div className="space-y-8 animate-fadeIn">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 border-b border-slate-100 pb-6">
-              <div>
-                <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Meus Produtos</h1>
-                <p className="text-slate-500 mt-1 font-medium">Gerencie seu catálogo, edite ofertas e crie novos itens.</p>
+                  <nav className="space-y-2">
+                      {[
+                        { id: 'overview', icon: LayoutDashboard, label: 'Visão Geral' },
+                        { id: 'sales', icon: TrendingUp, label: 'Vendas' },
+                        { id: 'products', icon: ShoppingBag, label: 'Produtos' },
+                        { id: 'links', icon: LinkIcon, label: 'Links' },
+                        { id: 'settings', icon: Settings, label: 'Configurações' },
+                      ].map((item) => (
+                        <button key={item.id} onClick={() => changeTab(item.id as Tab)} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-sm ${activeTab === item.id ? 'bg-brand-50 text-brand-600' : 'text-slate-600'}`}>
+                            <item.icon size={18}/> {item.label}
+                        </button>
+                      ))}
+                  </nav>
               </div>
-              <button 
-                onClick={handleOpenNewProduct}
-                className="px-6 py-3 bg-gradient-to-r from-brand-500 to-brand-700 hover:shadow-glow text-white rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-brand-200 transition-all transform hover:-translate-y-0.5"
-              >
-                <Plus size={20} /> Criar Produto
-              </button>
-            </div>
+          </div>
+      )}
 
-            {loading ? (
-                 <div className="flex justify-center py-20"><Loader2 className="animate-spin text-brand-600" size={40}/></div>
-            ) : products.length === 0 ? (
-              <div className="bg-white rounded-3xl p-16 text-center border-2 border-dashed border-slate-200 flex flex-col items-center">
-                <div className="w-20 h-20 bg-brand-50 rounded-full flex items-center justify-center mb-6 text-brand-300"><ShoppingBag size={32}/></div>
-                <h3 className="text-xl font-bold text-slate-900 mb-2">Seu catálogo está vazio</h3>
-                <p className="text-slate-500 mb-8 max-w-xs mx-auto font-medium">Comece a vender hoje mesmo criando seu primeiro produto digital.</p>
-                <button onClick={handleOpenNewProduct} className="text-brand-600 font-bold hover:underline">Criar primeiro produto</button>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {products.map((product) => (
-                      <div key={product.id} className="bg-white rounded-2xl p-5 shadow-card hover:shadow-glow border border-slate-100 hover:border-brand-300 transition-all duration-300 flex flex-col group relative overflow-hidden">
+      {/* MAIN CONTENT WITH GRID LAYOUT */}
+      <main className="pt-24 pb-12 px-4 md:px-8 max-w-[1600px] mx-auto">
+          {activeTab === 'overview' && (
+              <div className="grid grid-cols-12 gap-8">
+                  
+                  {/* LEFT COLUMN (MAIN) */}
+                  <div className="col-span-12 lg:col-span-9 space-y-8">
+                      
+                      {/* GREETING SECTION */}
+                      <div className="flex justify-between items-end">
+                          <div>
+                              <h1 className="text-3xl font-bold text-slate-900 tracking-tight mb-2">
+                                  {getGreeting()}, {profile.fullName.split(' ')[0]}
+                              </h1>
+                              <p className="text-lg text-slate-500 font-medium">
+                                  Visão Geral das suas vendas aprovadas
+                              </p>
+                          </div>
                           
-                          <div className="flex gap-4 mb-4">
-                              <div className="w-20 h-20 rounded-xl bg-slate-50 border border-slate-200 overflow-hidden flex-shrink-0 relative">
-                                  {product.image_url ? (
-                                      <img src={product.image_url} alt="" className="w-full h-full object-cover" />
-                                  ) : (
-                                      <div className="w-full h-full flex items-center justify-center text-slate-300"><ImageIcon size={24}/></div>
-                                  )}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                  <div className="flex justify-between items-start">
-                                     <h3 className="font-bold text-slate-900 text-lg truncate pr-2 leading-tight">{product.name}</h3>
-                                     <div className="flex-shrink-0">{getStatusBadge(product.status)}</div>
-                                  </div>
-                                  <p className="text-xs text-slate-500 mt-1 capitalize font-medium">{product.category}</p>
-                                  <div className="mt-2 font-bold text-brand-600 text-lg">{product.price.toLocaleString()} MT</div>
-                              </div>
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-2 border-t border-b border-slate-50 py-3 mb-4">
-                              <div className="text-center border-r border-slate-50">
-                                  <div className="text-xs text-slate-400 font-medium uppercase tracking-wide">Vendas</div>
-                                  {/* Dynamic Calculation from Sales Table */}
-                                  <div className="font-bold text-slate-800">{getProductStats(product.id).count}</div>
-                              </div>
-                              <div className="text-center">
-                                  <div className="text-xs text-slate-400 font-medium uppercase tracking-wide">Receita</div>
-                                  {/* Dynamic Calculation from Sales Table */}
-                                  <div className="font-bold text-slate-800">{getProductStats(product.id).revenue.toLocaleString()}</div>
-                              </div>
-                          </div>
-
-                          <div className="mt-auto grid grid-cols-2 gap-2">
-                              <button 
-                                onClick={() => handleEditProduct(product)}
-                                className="flex items-center justify-center gap-1 py-2 rounded-lg text-slate-600 bg-slate-50 hover:bg-brand-50 hover:text-brand-600 text-xs font-bold transition-colors"
+                          {/* Period Selector */}
+                          <div className="flex gap-2">
+                              <select 
+                                value={dateRange} 
+                                onChange={(e) => setDateRange(e.target.value as DateRange)}
+                                className="bg-white border border-slate-200 text-slate-700 py-2 px-4 rounded-xl font-bold text-sm shadow-sm outline-none focus:ring-2 focus:ring-brand-500 cursor-pointer hover:bg-slate-50"
                               >
-                                  <Edit3 size={14}/> Editar
-                              </button>
-                              <button 
-                                onClick={() => openDeleteModal('product', product.id, product.name)}
-                                className="flex items-center justify-center gap-1 py-2 rounded-lg text-red-500 bg-red-50 hover:bg-red-100 text-xs font-bold transition-colors"
-                              >
-                                  <Trash2 size={14}/> Excluir
+                                  <option value="today">Hoje</option>
+                                  <option value="7days">Últimos 7 dias</option>
+                                  <option value="30days">Últimos 30 dias</option>
+                                  <option value="all">Todo Período</option>
+                              </select>
+                              <button onClick={() => handleOpenNewProduct()} className="bg-slate-900 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-lg hover:bg-slate-800 transition-colors flex items-center gap-2">
+                                  <Plus size={16}/> <span className="hidden sm:inline">Criar</span>
                               </button>
                           </div>
                       </div>
-                  ))}
-              </div>
-            )}
-          </div>
-        )}
 
-        {activeTab === 'links' && (
-           <div className="space-y-8 animate-fadeIn">
-               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-6">
-                  <div>
-                    <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Links de Pagamento</h1>
-                    <p className="text-slate-500 mt-1 font-medium">Gerencie, copie e acompanhe o desempenho dos seus links.</p>
+                      {/* KPI CARDS (4 COLS) */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+                          {/* 1. Receita Bruta */}
+                          <div className="bg-white p-6 rounded-3xl shadow-card border border-slate-100 hover:border-brand-200 transition-colors group">
+                              <div className="flex justify-between items-start mb-4">
+                                  <div className="p-3 bg-brand-50 text-brand-600 rounded-xl group-hover:scale-110 transition-transform">
+                                      <Wallet size={24}/>
+                                  </div>
+                                  <span className="text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full">+12%</span>
+                              </div>
+                              <div className="text-3xl font-bold text-slate-900 tracking-tight mb-1">{calculateGrossRevenue(filteredSales).toLocaleString()} MT</div>
+                              <p className="text-sm font-medium text-slate-500">Receita Bruta</p>
+                          </div>
+
+                          {/* 2. Vendas Aprovadas */}
+                          <div className="bg-white p-6 rounded-3xl shadow-card border border-slate-100 hover:border-blue-200 transition-colors group">
+                               <div className="flex justify-between items-start mb-4">
+                                  <div className="p-3 bg-blue-50 text-blue-600 rounded-xl group-hover:scale-110 transition-transform">
+                                      <ShoppingBag size={24}/>
+                                  </div>
+                              </div>
+                              <div className="text-3xl font-bold text-slate-900 tracking-tight mb-1">{filteredApprovedSales.length}</div>
+                              <p className="text-sm font-medium text-slate-500">Vendas Aprovadas</p>
+                          </div>
+
+                          {/* 3. CVR (Taxa de Conversão) - REPLACED TICKET AVERAGE */}
+                          <div className="bg-white p-6 rounded-3xl shadow-card border border-slate-100 hover:border-purple-200 transition-colors group">
+                               <div className="flex justify-between items-start mb-4">
+                                  <div className="p-3 bg-purple-50 text-purple-600 rounded-xl group-hover:scale-110 transition-transform">
+                                      <MousePointerClick size={24}/>
+                                  </div>
+                              </div>
+                              <div className="text-3xl font-bold text-slate-900 tracking-tight mb-1">{calculateCVR()}%</div>
+                              <p className="text-sm font-medium text-slate-500">Taxa de Conversão</p>
+                          </div>
+
+                          {/* 4. Canceladas - REPLACED PENDING */}
+                          <div className="bg-white p-6 rounded-3xl shadow-card border border-slate-100 hover:border-red-200 transition-colors group">
+                               <div className="flex justify-between items-start mb-4">
+                                  <div className="p-3 bg-red-50 text-red-600 rounded-xl group-hover:scale-110 transition-transform">
+                                      <X size={24}/>
+                                  </div>
+                              </div>
+                              <div className="text-3xl font-bold text-slate-900 tracking-tight mb-1">{filteredSales.filter(s => s.status === 'cancelled').length}</div>
+                              <p className="text-sm font-medium text-slate-500">Vendas Canceladas</p>
+                          </div>
+                      </div>
+
+                      {/* CHART SECTION */}
+                      {renderNeoGlassChart()}
+
+                      {/* RECENT SALES TABLE (Filtered by Search) */}
+                      <div className="bg-white rounded-3xl shadow-card border border-slate-100 overflow-hidden">
+                          <div className="p-6 border-b border-slate-50 flex justify-between items-center">
+                              <h3 className="font-bold text-slate-900 text-lg">Histórico de Transações</h3>
+                              <button onClick={() => changeTab('sales')} className="text-sm text-brand-600 font-bold hover:underline">Ver tudo</button>
+                          </div>
+                          <div className="overflow-x-auto">
+                              <table className="w-full text-left border-collapse">
+                                  <thead>
+                                      <tr className="bg-slate-50/50 text-xs font-bold text-slate-500 uppercase tracking-wide">
+                                          <th className="p-4 pl-6">ID Transação</th>
+                                          <th className="p-4">Produto</th>
+                                          <th className="p-4">Cliente</th>
+                                          <th className="p-4">Valor</th>
+                                          <th className="p-4">Status</th>
+                                      </tr>
+                                  </thead>
+                                  <tbody className="text-sm">
+                                      {filteredSales.slice(0, 5).map(sale => (
+                                          <tr key={sale.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                                              <td className="p-4 pl-6 font-mono text-xs text-slate-500">#{sale.id.slice(0,8).toUpperCase()}</td>
+                                              <td className="p-4 font-medium text-slate-900">{sale.product_name}</td>
+                                              <td className="p-4 text-slate-600">{sale.customer_name}</td>
+                                              <td className="p-4 font-bold text-slate-900">{sale.amount.toLocaleString()} MT</td>
+                                              <td className="p-4">
+                                                  <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${
+                                                      sale.status === 'approved' ? 'bg-green-100 text-green-700' : 
+                                                      sale.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 
+                                                      'bg-red-100 text-red-700'
+                                                  }`}>
+                                                      {sale.status === 'approved' ? 'Aprovado' : sale.status === 'pending' ? 'Pendente' : 'Cancelado'}
+                                                  </span>
+                                              </td>
+                                          </tr>
+                                      ))}
+                                      {filteredSales.length === 0 && (
+                                          <tr><td colSpan={5} className="p-8 text-center text-slate-400">Nenhuma transação encontrada.</td></tr>
+                                      )}
+                                  </tbody>
+                              </table>
+                          </div>
+                      </div>
                   </div>
-               </div>
-               
-               {/* New Link Creation Section */}
-               <div className="bg-white p-6 rounded-2xl shadow-card border border-slate-200">
-                   <h3 className="font-bold text-slate-900 mb-4 flex items-center gap-2"><Sparkles size={18} className="text-brand-500"/> Criar Novo Link Rápido</h3>
-                   <div className="flex flex-col md:flex-row gap-3 items-end bg-slate-50 p-4 rounded-xl border border-slate-100">
-                       <div className="flex-1 w-full">
-                           <label className="block text-xs font-bold text-slate-500 uppercase mb-2 ml-1">Produto Aprovado</label>
-                           <div className="relative">
-                               <select 
-                                 value={selectedProductIdForLink}
-                                 onChange={(e) => setSelectedProductIdForLink(e.target.value)}
-                                 className="w-full pl-4 pr-10 py-3 bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-brand-500 appearance-none text-sm font-medium shadow-sm transition-all"
-                               >
-                                   <option value="">Selecione um produto...</option>
-                                   {products.filter(p => p.status === 'active').map(p => (
-                                       <option key={p.id} value={p.id}>{p.name} - {p.price} MT</option>
-                                   ))}
-                               </select>
-                               <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"><Search size={16}/></div>
+
+                  {/* RIGHT COLUMN (LIVE FEED) */}
+                  <div className="col-span-12 lg:col-span-3 space-y-6">
+                      <div className="sticky top-24">
+                          <div className="bg-white rounded-3xl shadow-card border border-slate-100 overflow-hidden min-h-[500px] flex flex-col">
+                              <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                                  <h3 className="font-bold text-slate-900">Últimas Vendas</h3>
+                                  <div className="bg-blue-600 text-white text-[10px] font-bold px-2 py-1 rounded-full flex items-center gap-1 animate-pulse shadow-glow">
+                                      <div className="w-1.5 h-1.5 bg-white rounded-full"></div> AO VIVO
+                                  </div>
+                              </div>
+                              <div className="flex-1 overflow-y-auto max-h-[600px] p-2 space-y-1 custom-scrollbar">
+                                  {sales.slice(0, 15).map((sale, idx) => (
+                                      <div key={sale.id} className="p-3 rounded-xl hover:bg-slate-50 transition-all border border-transparent hover:border-slate-100 group animate-fadeIn" style={{animationDelay: `${idx * 100}ms`}}>
+                                          <div className="flex justify-between items-start mb-1">
+                                              <span className="text-xs font-bold text-slate-800 line-clamp-1 w-3/4">{sale.product_name}</span>
+                                              <span className="text-xs font-bold text-green-600">{sale.amount.toLocaleString()}</span>
+                                          </div>
+                                          <div className="flex justify-between items-center mt-2">
+                                              <div className="flex items-center gap-1.5">
+                                                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white ${sale.payment_method === 'mpesa' ? 'bg-red-500' : 'bg-orange-500'}`}>
+                                                      {sale.payment_method === 'mpesa' ? 'M' : 'E'}
+                                                  </div>
+                                                  <span className="text-[10px] text-slate-400 uppercase">{sale.payment_method}</span>
+                                              </div>
+                                              <div className="text-[10px] font-mono text-slate-300 group-hover:text-slate-500 transition-colors" title={sale.id}>
+                                                  #{sale.id.slice(0,6)}
+                                              </div>
+                                          </div>
+                                      </div>
+                                  ))}
+                                  {sales.length === 0 && (
+                                      <div className="flex flex-col items-center justify-center h-40 text-slate-400 text-xs gap-2">
+                                          <Activity size={24} className="opacity-20"/>
+                                          Aguardando vendas...
+                                      </div>
+                                  )}
+                              </div>
+                          </div>
+
+                          {/* Mini Promo Card or Extra Info */}
+                          <div className="mt-6 bg-gradient-to-br from-brand-600 to-brand-800 rounded-3xl p-6 text-white relative overflow-hidden shadow-lg shadow-brand-200">
+                              <div className="absolute top-0 right-0 -mr-10 -mt-10 w-32 h-32 bg-white opacity-10 rounded-full blur-2xl"></div>
+                              <h4 className="font-bold text-lg mb-2 relative z-10">Maximize suas vendas!</h4>
+                              <p className="text-xs text-brand-100 mb-4 relative z-10 leading-relaxed">Ative o Order Bump nos seus produtos e aumente seu lucro em até 30%.</p>
+                              <button onClick={() => changeTab('products')} className="w-full bg-white text-brand-700 py-2.5 rounded-xl text-xs font-bold hover:bg-brand-50 transition-colors shadow-md relative z-10">Configurar Agora</button>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          )}
+
+          {/* OTHER TABS (Keeping logic, just updating wrapper if needed - currently inheriting grid via main) */}
+          {activeTab !== 'overview' && (
+             <div className="max-w-6xl mx-auto">
+                 {/* Logic for Products, Links, Sales List, Settings remains same but rendered within this container */}
+                 {activeTab === 'products' && (
+                     <div className="space-y-8 animate-fadeIn">
+                        {/* Products Header */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 pb-6 border-b border-slate-200">
+                           <div>
+                                <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Meus Produtos</h1>
+                                <p className="text-slate-500 mt-1 font-medium">Gerencie seu catálogo, edite ofertas e crie novos itens.</p>
                            </div>
-                       </div>
-                       <button 
-                         onClick={() => generateLink()}
-                         disabled={!selectedProductIdForLink || isCreatingLink}
-                         className="w-full md:w-auto px-8 py-3 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm shadow-md"
-                       >
-                         {isCreatingLink ? <Loader2 size={16} className="animate-spin" /> : <LinkIcon size={16} />}
-                         Gerar Link
-                       </button>
-                   </div>
-               </div>
-
-               <div className="space-y-4">
-                   {paymentLinks.length === 0 ? (
-                       <div className="p-16 text-center text-slate-400 bg-slate-50 rounded-2xl border-2 border-dashed border-slate-200">
-                           <LinkIcon size={48} className="mx-auto mb-4 opacity-20"/>
-                           <p className="text-sm font-medium">Nenhum link gerado ainda.</p>
-                       </div>
-                   ) : (
-                       <div className="grid grid-cols-1 gap-4">
-                           {paymentLinks.map(link => (
-                               <div key={link.id} className="bg-white p-5 rounded-2xl border border-slate-100 shadow-card hover:shadow-md transition-all flex flex-col md:flex-row items-center gap-6 animate-slideDown">
-                                   <div className="flex-1 w-full">
-                                       <div className="flex items-center gap-2 mb-1">
-                                           <span className="bg-brand-50 text-brand-700 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wide">Produto</span>
-                                           <h4 className="font-bold text-slate-900">{link.product_name}</h4>
-                                       </div>
-                                       <div className="flex items-center gap-2 bg-slate-50 p-2 rounded-xl border border-slate-100 w-full max-w-xl group cursor-pointer" onClick={() => {
-                                           try {
-                                               navigator.clipboard.writeText(link.url).then(() => alert("Link copiado!")).catch((e) => alert("Erro ao copiar. Tente selecionar e copiar manualmente."));
-                                           } catch(e) {
-                                               alert("Erro de segurança ao copiar. Selecione o texto manualmente.");
-                                           }
-                                       }}>
-                                           <div className="bg-white p-1 rounded border border-slate-200 text-slate-400"><LinkIcon size={12}/></div>
-                                           <code className="text-xs text-brand-600 truncate flex-1 font-mono">{link.url}</code>
-                                           <Copy size={14} className="text-slate-400 group-hover:text-brand-600"/>
-                                       </div>
-                                       <p className="text-[10px] text-slate-400 mt-2 ml-1 font-medium">Criado em: {new Date(link.created_at).toLocaleDateString()}</p>
-                                   </div>
-                                   <div className="flex items-center gap-6 w-full md:w-auto justify-between md:justify-end border-t md:border-t-0 border-slate-50 pt-4 md:pt-0">
-                                       <div className="flex items-center gap-2">
-                                            <a href={link.url} target="_blank" className="p-2 text-slate-500 hover:text-brand-600 hover:bg-brand-50 rounded-lg transition-colors"><ExternalLink size={18} /></a>
-                                            <button onClick={() => openDeleteModal('link', link.id, link.product_name)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"><Trash2 size={18}/></button>
-                                       </div>
-                                   </div>
-                               </div>
-                           ))}
-                       </div>
-                   )}
-               </div>
-           </div>
-        )}
-
-        {activeTab === 'settings' && (
-           <div className="animate-fadeIn p-16 bg-white rounded-3xl border border-slate-100 max-w-2xl mx-auto text-center shadow-card">
-               <div className="w-20 h-20 bg-brand-50 rounded-full flex items-center justify-center mx-auto mb-6">
-                   <Settings size={32} className="text-brand-300"/>
-               </div>
-               <h2 className="text-2xl font-bold mb-3 text-slate-900">Configurações da Conta</h2>
-               <p className="text-slate-500 mb-8 max-w-sm mx-auto font-medium">Em breve você poderá gerenciar seu perfil, métodos de recebimento e notificações.</p>
-               <button onClick={requestNotificationPermission} className="bg-brand-100 text-brand-700 px-6 py-2 rounded-full text-sm font-bold flex items-center gap-2 mx-auto hover:bg-brand-200 transition-colors"><Bell size={16}/> Ativar Notificações</button>
-           </div>
-        )}
-
+                           <button onClick={handleOpenNewProduct} className="px-6 py-3 bg-slate-900 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-slate-800 transition-all shadow-lg shadow-slate-200"><Plus size={20} /> Criar Produto</button>
+                        </div>
+                        {/* Products Grid (Reusing Logic) */}
+                        {loading ? <div className="flex justify-center py-20"><Loader2 className="animate-spin text-brand-600" size={40}/></div> : 
+                         products.length === 0 ? <div className="bg-white rounded-3xl p-16 text-center border-2 border-dashed border-slate-200"><ShoppingBag size={32} className="mx-auto text-slate-300 mb-4"/><h3 className="font-bold text-slate-900">Catálogo vazio</h3><button onClick={handleOpenNewProduct} className="text-brand-600 font-bold hover:underline mt-2">Criar primeiro produto</button></div> :
+                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                             {products.map(product => (
+                                 <div key={product.id} className="bg-white rounded-2xl p-5 shadow-card border border-slate-100 hover:border-brand-300 transition-all group flex flex-col">
+                                     <div className="flex gap-4 mb-4">
+                                         <div className="w-16 h-16 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center overflow-hidden flex-shrink-0">
+                                            {product.image_url ? <img src={product.image_url} className="w-full h-full object-cover"/> : <ImageIcon className="text-slate-300" size={20}/>}
+                                         </div>
+                                         <div className="flex-1 min-w-0">
+                                             <div className="flex justify-between items-start"><h3 className="font-bold text-slate-900 truncate">{product.name}</h3>{getStatusBadge(product.status)}</div>
+                                             <div className="text-brand-600 font-bold mt-1">{product.price.toLocaleString()} MT</div>
+                                         </div>
+                                     </div>
+                                     <div className="grid grid-cols-2 gap-2 border-t border-b border-slate-50 py-3 mb-4 text-center">
+                                         <div><div className="text-[10px] text-slate-400 font-bold uppercase">Vendas</div><div className="font-bold text-slate-800">{getProductStats(product.id).count}</div></div>
+                                         <div><div className="text-[10px] text-slate-400 font-bold uppercase">Receita</div><div className="font-bold text-slate-800">{getProductStats(product.id).revenue.toLocaleString()}</div></div>
+                                     </div>
+                                     <div className="mt-auto grid grid-cols-2 gap-2">
+                                         <button onClick={() => handleEditProduct(product)} className="py-2 bg-slate-50 text-slate-600 text-xs font-bold rounded-lg hover:bg-slate-100 flex justify-center items-center gap-1"><Edit3 size={14}/> Editar</button>
+                                         <button onClick={() => openDeleteModal('product', product.id, product.name)} className="py-2 bg-red-50 text-red-500 text-xs font-bold rounded-lg hover:bg-red-100 flex justify-center items-center gap-1"><Trash2 size={14}/> Excluir</button>
+                                     </div>
+                                 </div>
+                             ))}
+                         </div>
+                        }
+                     </div>
+                 )}
+                 {activeTab === 'links' && (
+                     <div className="space-y-8 animate-fadeIn">
+                        <div className="pb-6 border-b border-slate-200">
+                             <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Links de Pagamento</h1>
+                             <p className="text-slate-500 mt-1 font-medium">Crie checkouts seguros para seus produtos.</p>
+                        </div>
+                        <div className="bg-white p-6 rounded-2xl shadow-card border border-slate-200 flex flex-col md:flex-row gap-4 items-end">
+                            <div className="flex-1 w-full"><label className="text-xs font-bold text-slate-500 uppercase mb-2 block">Produto</label><select value={selectedProductIdForLink} onChange={e => setSelectedProductIdForLink(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none font-medium text-sm focus:ring-2 focus:ring-brand-500"><option value="">Selecione...</option>{products.filter(p=>p.status==='active').map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+                            <button onClick={() => generateLink()} disabled={isCreatingLink || !selectedProductIdForLink} className="w-full md:w-auto px-8 py-3 bg-brand-600 text-white font-bold rounded-xl hover:bg-brand-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg shadow-brand-200">{isCreatingLink ? <Loader2 className="animate-spin" size={18}/> : <LinkIcon size={18}/>} Gerar Link</button>
+                        </div>
+                        <div className="space-y-3">
+                            {paymentLinks.map(link => (
+                                <div key={link.id} className="bg-white p-4 rounded-xl border border-slate-100 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-1"><span className="text-[10px] font-bold bg-brand-50 text-brand-700 px-2 py-0.5 rounded uppercase">Produto</span><h4 className="font-bold text-slate-900 truncate">{link.product_name}</h4></div>
+                                        <div className="text-xs text-slate-400 font-mono truncate">{link.url}</div>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button onClick={() => navigator.clipboard.writeText(link.url).then(()=>alert("Copiado!"))} className="p-2 text-slate-500 hover:text-brand-600 bg-slate-50 hover:bg-brand-50 rounded-lg"><Copy size={16}/></button>
+                                        <a href={link.url} target="_blank" className="p-2 text-slate-500 hover:text-brand-600 bg-slate-50 hover:bg-brand-50 rounded-lg"><ExternalLink size={16}/></a>
+                                        <button onClick={() => openDeleteModal('link', link.id, link.product_name)} className="p-2 text-slate-500 hover:text-red-600 bg-slate-50 hover:bg-red-50 rounded-lg"><Trash2 size={16}/></button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                     </div>
+                 )}
+                 {activeTab === 'sales' && (
+                     <div className="space-y-8 animate-fadeIn">
+                         {/* Sales Tab Logic Reused from original but simpler layout */}
+                         <div className="pb-6 border-b border-slate-200 flex justify-between items-end">
+                             <div>
+                                <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Vendas</h1>
+                                <p className="text-slate-500 mt-1 font-medium">Relatório completo de transações.</p>
+                             </div>
+                             <div className="bg-white border border-slate-200 p-1 rounded-lg flex text-xs font-bold text-slate-600">
+                                 <div className="px-3 py-1 bg-slate-100 rounded">Exportar CSV</div>
+                             </div>
+                         </div>
+                         <div className="bg-white rounded-3xl shadow-card border border-slate-100 overflow-hidden">
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left border-collapse">
+                                    <thead className="bg-slate-50 text-xs font-bold text-slate-500 uppercase"><tr className="border-b border-slate-100"><th className="p-4">ID</th><th className="p-4">Produto</th><th className="p-4">Cliente</th><th className="p-4">Valor</th><th className="p-4">Status</th></tr></thead>
+                                    <tbody className="text-sm">
+                                        {filteredSales.map(sale => (
+                                            <tr key={sale.id} className="border-b border-slate-50 hover:bg-slate-50">
+                                                <td className="p-4 font-mono text-xs text-slate-400">#{sale.id.slice(0,8)}</td>
+                                                <td className="p-4 font-medium">{sale.product_name}</td>
+                                                <td className="p-4 text-slate-600">{sale.customer_name}<div className="text-[10px] text-slate-400">{sale.customer_phone}</div></td>
+                                                <td className="p-4 font-bold">{sale.amount.toLocaleString()} MT</td>
+                                                <td className="p-4"><span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${sale.status==='approved'?'bg-green-100 text-green-700':sale.status==='cancelled'?'bg-red-100 text-red-700':'bg-yellow-100 text-yellow-700'}`}>{sale.status}</span></td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                         </div>
+                     </div>
+                 )}
+                 {activeTab === 'settings' && (
+                     <div className="flex flex-col items-center justify-center py-20 bg-white rounded-3xl shadow-card border border-slate-100">
+                         <div className="w-24 h-24 bg-brand-50 rounded-full flex items-center justify-center text-brand-200 mb-6"><Settings size={48}/></div>
+                         <h2 className="text-2xl font-bold text-slate-900 mb-2">Configurações</h2>
+                         <p className="text-slate-500 mb-8">Gerencie perfil e notificações.</p>
+                         <button onClick={handleEnableNotifications} className="bg-brand-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-brand-700 shadow-lg shadow-brand-200">Ativar Notificações Push</button>
+                     </div>
+                 )}
+             </div>
+          )}
       </main>
 
-      {/* Product Modal (Keeping same logic) */}
+      {/* Product Modal (Reused) */}
       {showProductModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-md animate-fadeIn">
           <div className="bg-white rounded-3xl w-full max-w-2xl shadow-glow flex flex-col overflow-hidden max-h-[90vh] animate-slideUp border border-white/20">
