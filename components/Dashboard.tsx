@@ -183,6 +183,15 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
 
   const filteredApprovedSales = filteredSales.filter(s => s.status === 'approved');
 
+  // --- HELPER PARA CALCULAR ESTATISTICAS POR PRODUTO ---
+  // Calcula dinamicamente baseado na tabela de vendas, não no contador estático do produto
+  const getProductStats = (productId: string) => {
+      const productSales = sales.filter(s => s.product_id === productId && s.status === 'approved');
+      const count = productSales.length;
+      const revenue = productSales.reduce((acc, curr) => acc + curr.amount, 0);
+      return { count, revenue };
+  };
+
   // Helper Functions
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -227,6 +236,19 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
     setLoading(true);
     
     try {
+        // Fetch Sales First to have data ready
+        const { data: salesData, error: salesError } = await supabase
+        .from('sales')
+        .select('*')
+        .eq('user_id', session.user.id)
+        .order('created_at', { ascending: false });
+
+        if (!salesError && salesData) {
+            setSales(salesData);
+        } else {
+             setSales([]);
+        }
+
         // Fetch Products
         const { data: productsData } = await supabase
           .from('products')
@@ -244,19 +266,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
         .order('created_at', { ascending: false });
         
         if (linksData) setPaymentLinks(linksData);
-
-        // Fetch Sales
-        const { data: salesData, error: salesError } = await supabase
-        .from('sales')
-        .select('*')
-        .eq('user_id', session.user.id)
-        .order('created_at', { ascending: false });
-
-        if (!salesError && salesData) {
-            setSales(salesData);
-        } else {
-             setSales([]);
-        }
 
     } catch (e) {
         console.error("Error fetching data", e);
@@ -1068,11 +1077,13 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                           <div className="grid grid-cols-2 gap-2 border-t border-b border-slate-50 py-3 mb-4">
                               <div className="text-center border-r border-slate-50">
                                   <div className="text-xs text-slate-400 font-medium uppercase tracking-wide">Vendas</div>
-                                  <div className="font-bold text-slate-800">{product.sales_count || 0}</div>
+                                  {/* Dynamic Calculation from Sales Table */}
+                                  <div className="font-bold text-slate-800">{getProductStats(product.id).count}</div>
                               </div>
                               <div className="text-center">
                                   <div className="text-xs text-slate-400 font-medium uppercase tracking-wide">Receita</div>
-                                  <div className="font-bold text-slate-800">{(product.total_revenue || 0).toLocaleString()}</div>
+                                  {/* Dynamic Calculation from Sales Table */}
+                                  <div className="font-bold text-slate-800">{getProductStats(product.id).revenue.toLocaleString()}</div>
                               </div>
                           </div>
 
