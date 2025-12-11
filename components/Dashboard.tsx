@@ -292,11 +292,14 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
         const product = products.find(p => p.id === targetId);
         if (!product) throw new Error("Produto não encontrado");
 
+        // Use origin dinamico para garantir que funcione em qualquer ambiente
+        const baseUrl = window.location.origin;
+
         const newLinkPayload = {
             user_id: session.user.id,
             product_id: product.id,
             product_name: product.name,
-            url: 'pending...',
+            url: 'Gerando link...', // Texto temporário
         };
 
         // 1. Insert Initial Record - Safe Array Handling (No .single())
@@ -307,23 +310,27 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
 
         const createdLink = data[0]; // Access first element safely
 
-        const finalUrl = `https://fastpayzinmoz.vercel.app/p/${product.id}?ref=${createdLink.id}`;
+        // 2. Construct Final URL (Manually, to ensure we have it)
+        const finalUrl = `${baseUrl}/p/${product.id}?ref=${createdLink.id}`;
         
-        // 2. Update with Final URL - Safe Array Handling (No .single())
-        const { data: updatedData, error: updateError } = await supabase
+        // 3. Update DB (We don't need to wait for data return, just error check)
+        const { error: updateError } = await supabase
             .from('payment_links')
             .update({ url: finalUrl })
-            .eq('id', createdLink.id)
-            .select();
+            .eq('id', createdLink.id);
             
         if (updateError) throw updateError;
         
-        const finalLinkData = updatedData && updatedData.length > 0 ? updatedData[0] : createdLink;
+        // 4. Construct Final Object Optimistically (Don't rely on DB return for UI responsiveness)
+        const finalLinkObject = {
+            ...createdLink,
+            url: finalUrl
+        };
 
         // Force a delay to show the beautiful loading screen
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 1500));
 
-        setPaymentLinks(prev => [finalLinkData, ...prev]);
+        setPaymentLinks(prev => [finalLinkObject, ...prev]);
         setSelectedProductIdForLink('');
         if (activeTab !== 'links') changeTab('links');
 
