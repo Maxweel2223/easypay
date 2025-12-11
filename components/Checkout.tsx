@@ -125,7 +125,7 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
           sendSMS(ADMIN_NUM, msgAdmin)
       ]);
 
-      // 2. Enviar Email (Resend) - EXATAMENTE COMO SOLICITADO
+      // 2. Enviar Email (Resend)
       const sendEmailViaResend = async () => {
         try {
             const resend = new Resend(RESEND_API_KEY);
@@ -146,7 +146,7 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
               </div>
             `;
 
-            // Lista de destinatários (Admin + Cliente se forneceu email)
+            // Lista de destinatários
             const recipients = ['developermax2maker@gmail.com'];
             if (formData.email) recipients.push(formData.email);
 
@@ -163,14 +163,12 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
         }
       };
 
-      // Executa o envio de email sem bloquear o fluxo principal
       sendEmailViaResend();
   };
 
   const handlePayment = async () => {
       setPaymentError(null);
 
-      // Validação Básica
       if (!formData.fullName || !formData.whatsapp || !formData.paymentPhone) {
           alert("Por favor, preencha seu nome, WhatsApp e número de pagamento.");
           return;
@@ -179,7 +177,6 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
       const cleanPaymentPhone = formData.paymentPhone.replace(/\D/g, '');
       const cleanWhatsApp = formData.whatsapp.replace(/\D/g, '');
       
-      // Validação de Prefixos
       if (cleanPaymentPhone.length < 9) {
           alert("Número de pagamento inválido.");
           return;
@@ -198,17 +195,42 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
       }
 
       setIsProcessing(true);
+      const totalAmount = calculateTotal();
+
+      // 1. REGISTRAR VENDA PENDENTE (Atribuição ao Dono)
+      // Usamos o ID do produto para encontrar o dono (product.user_id)
+      let pendingSaleId = null;
+      try {
+          const { data: saleData, error: saleError } = await supabase.from('sales').insert({
+              user_id: product.user_id, // Importante: Atribui a venda ao dono do produto
+              product_id: product.id,
+              product_name: product.name,
+              amount: totalAmount,
+              status: 'pending', // Status Inicial
+              payment_method: paymentMethod,
+              customer_name: formData.fullName,
+              customer_phone: cleanWhatsApp,
+              customer_email: formData.email
+          }).select().single();
+
+          if (saleError) {
+              console.error("Erro ao registrar venda pendente:", saleError);
+              // Continuamos mesmo assim, mas o dashboard pode não atualizar em tempo real sem o registro
+          } else {
+              pendingSaleId = saleData.id;
+          }
+      } catch (err) {
+          console.error("Erro DB", err);
+      }
 
       try {
-          const totalAmount = calculateTotal();
+          // 2. Processar Pagamento na GibraPay
           const endpoint = "https://gibrapay.online/v1/transfer";
           const payload = {
               wallet_id: GIBRA_WALLET_ID,
               amount: totalAmount,
-              number_phone: cleanPaymentPhone // Número para cobrança
+              number_phone: cleanPaymentPhone
           };
-
-          console.log("Processing payment...", payload);
 
           const response = await fetch(endpoint, {
               method: "POST",
@@ -226,13 +248,16 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
              throw new Error("Erro de comunicação com o servidor de pagamento.");
           }
 
-          // Verificações de Segurança e Erro
           const isStatusError = result.status === 'error';
           const isTransactionDeclined = result.callback?.transaction_status === 'Declined';
           const isStatusPending = result.status === 'Pending';
           const isDataFailed = result.data?.status === 'failed';
 
           if (isStatusError || isTransactionDeclined || isDataFailed) {
+              // Atualizar venda para Cancelada/Falha se tiver ID
+              if (pendingSaleId) {
+                  await supabase.from('sales').update({ status: 'cancelled' }).eq('id', pendingSaleId);
+              }
               const msg = result.message || "Pagamento recusado ou falhou.";
               throw new Error(msg);
           }
@@ -245,20 +270,28 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
                throw new Error("Pagamento pendente. Por favor, aguarde a confirmação no seu celular e tente novamente.");
           }
 
-          // SUCESSO
+          // 3. SUCESSO - Atualizar venda para APROVADA
+          if (pendingSaleId) {
+              await supabase.from('sales').update({ status: 'approved' }).eq('id', pendingSaleId);
+              
+              // Increment Sales Count on Product
+              await supabase.from('products').update({ 
+                  sales_count: (product.sales_count || 0) + 1,
+                  total_revenue: (product.total_revenue || 0) + totalAmount
+              }).eq('id', product.id);
+          }
+
           setPaymentSuccess(true);
           playSuccessSound();
 
-          // Enviar Notificações (SMS e Email)
           await sendPurchaseNotifications(
               formData.fullName,
-              cleanWhatsApp, // Envia para o WhatsApp de contato, não o de pagamento
+              cleanWhatsApp,
               product.name,
               totalAmount,
-              product.redemption_link || window.location.href // Fallback
+              product.redemption_link || window.location.href
           );
 
-          // Redirecionamento Automático
           setTimeout(() => {
              if (product.redemption_link) {
                  let url = product.redemption_link;
@@ -267,7 +300,7 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
              } else {
                  setIsProcessing(false);
              }
-          }, 5000); // 5 segundos para ler a mensagem de sucesso
+          }, 5000);
 
       } catch (error: any) {
           console.error("Payment Error:", error);
@@ -527,7 +560,7 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
                         <div className="flex justify-between items-center text-sm text-green-700 bg-green-50 p-2 rounded-lg border border-green-100">
                              <span className="font-medium flex items-center gap-1"><Zap size={12}/> Oferta Extra</span>
                              <span className="font-bold">+{product.offer_price.toLocaleString()} MT</span>
-                        </div>
+                    </div>
                     )}
                     <div className="border-t border-slate-200/60 pt-3 mt-1 flex justify-between items-center">
                          <span className="font-bold text-slate-900 text-lg">Total a Pagar</span>
