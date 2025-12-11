@@ -299,28 +299,37 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
             url: 'pending...',
         };
 
-        const { data, error } = await supabase.from('payment_links').insert([newLinkPayload]).select().single();
+        // 1. Insert Initial Record - Safe Array Handling (No .single())
+        const { data, error } = await supabase.from('payment_links').insert([newLinkPayload]).select();
 
         if (error) throw error;
-        if (!data) throw new Error("Falha ao criar link");
+        if (!data || data.length === 0) throw new Error("Falha ao criar o registro do link");
 
-        const finalUrl = `https://fastpayzinmoz.vercel.app/p/${product.id}?ref=${data.id}`;
+        const createdLink = data[0]; // Access first element safely
+
+        const finalUrl = `https://fastpayzinmoz.vercel.app/p/${product.id}?ref=${createdLink.id}`;
         
+        // 2. Update with Final URL - Safe Array Handling (No .single())
         const { data: updatedData, error: updateError } = await supabase
             .from('payment_links')
             .update({ url: finalUrl })
-            .eq('id', data.id)
-            .select()
-            .single();
+            .eq('id', createdLink.id)
+            .select();
             
         if (updateError) throw updateError;
+        
+        const finalLinkData = updatedData && updatedData.length > 0 ? updatedData[0] : createdLink;
 
-        setPaymentLinks(prev => [updatedData || data, ...prev]);
+        // Force a delay to show the beautiful loading screen
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        setPaymentLinks(prev => [finalLinkData, ...prev]);
         setSelectedProductIdForLink('');
         if (activeTab !== 'links') changeTab('links');
 
     } catch (e: any) {
-        alert("Erro: " + e.message);
+        console.error("Link Generation Error:", e);
+        alert("Erro ao gerar link: " + e.message);
     } finally {
         setIsCreatingLink(false);
     }
@@ -442,16 +451,16 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
         let savedData: Product | null = null;
 
         if (editingId) {
-             const { data } = await supabase.from('products').update(payload).eq('id', editingId).select().single();
-             savedData = data;
-             if (data) {
-                 setProducts(prev => prev.map(p => p.id === editingId ? data : p));
+             const { data } = await supabase.from('products').update(payload).eq('id', editingId).select();
+             if (data && data.length > 0) {
+                 savedData = data[0];
+                 setProducts(prev => prev.map(p => p.id === editingId ? savedData! : p));
              }
         } else {
-             const { data } = await supabase.from('products').insert([payload]).select().single();
-             savedData = data;
-             if (data) {
-                 setProducts(prev => [data, ...prev]);
+             const { data } = await supabase.from('products').insert([payload]).select();
+             if (data && data.length > 0) {
+                 savedData = data[0];
+                 setProducts(prev => [savedData!, ...prev]);
              }
         }
 
@@ -713,6 +722,22 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                 <div className="flex flex-col items-center">
                     <Loader2 size={40} className="text-brand-600 animate-spin mb-4" />
                     <p className="text-slate-500 font-medium animate-pulse">Carregando dados...</p>
+                </div>
+            </div>
+        )}
+
+        {/* LINK CREATION LOADING OVERLAY */}
+        {isCreatingLink && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/70 backdrop-blur-md animate-fadeIn">
+                <div className="bg-white rounded-3xl p-8 flex flex-col items-center justify-center shadow-2xl border border-white/20 transform scale-100 animate-bounce-slow">
+                    <div className="relative">
+                        <div className="w-16 h-16 rounded-full border-4 border-brand-100 border-t-brand-600 animate-spin"></div>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                            <LinkIcon size={20} className="text-brand-600" />
+                        </div>
+                    </div>
+                    <h3 className="text-xl font-bold text-slate-900 mt-6">Gerando Link...</h3>
+                    <p className="text-slate-500 text-sm mt-2 text-center max-w-xs">Criando sua página de checkout segura.</p>
                 </div>
             </div>
         )}
