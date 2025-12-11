@@ -58,9 +58,10 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
              setErrorProduct(true);
           } else {
             setProduct(data);
-            if (data.id) {
-                 await supabase.from('products').update({ views_count: (data.views_count || 0) + 1 }).eq('id', data.id).select();
-            }
+            // Increment view count securely if possible, otherwise ignore
+            try {
+                 await supabase.from('products').update({ views_count: (data.views_count || 0) + 1 }).eq('id', data.id);
+            } catch (e) { /* Ignore view count update errors */ }
           }
       } catch (err) {
           console.error("Unexpected error:", err);
@@ -197,16 +198,15 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
       setIsProcessing(true);
       const totalAmount = calculateTotal();
 
-      // 1. REGISTRAR VENDA PENDENTE (Atribuição ao Dono)
-      // Usamos o ID do produto para encontrar o dono (product.user_id)
+      // 1. REGISTRAR VENDA PENDENTE
       let pendingSaleId = null;
       try {
           const { data: saleData, error: saleError } = await supabase.from('sales').insert({
-              user_id: product.user_id, // Importante: Atribui a venda ao dono do produto
+              user_id: product.user_id, // Atribui a venda ao dono do produto
               product_id: product.id,
               product_name: product.name,
               amount: totalAmount,
-              status: 'pending', // Status Inicial
+              status: 'pending', 
               payment_method: paymentMethod,
               customer_name: formData.fullName,
               customer_phone: cleanWhatsApp,
@@ -215,7 +215,6 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
 
           if (saleError) {
               console.error("Erro ao registrar venda pendente:", saleError);
-              // Continuamos mesmo assim
           } else {
               pendingSaleId = saleData.id;
           }
@@ -254,7 +253,6 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
           const isDataFailed = result.data?.status === 'failed';
 
           if (isStatusError || isTransactionDeclined || isDataFailed) {
-              // Atualizar venda para Cancelada/Falha se tiver ID
               if (pendingSaleId) {
                   await supabase.from('sales').update({ status: 'cancelled' }).eq('id', pendingSaleId);
               }
@@ -270,21 +268,12 @@ const Checkout: React.FC<CheckoutProps> = ({ productId }) => {
                throw new Error("Pagamento pendente. Por favor, aguarde a confirmação no seu celular e tente novamente.");
           }
 
-          // 3. SUCESSO - Atualizar venda para APROVADA e Incrementar Produto
+          // 3. SUCESSO - Atualizar venda para APROVADA
+          // IMPORTANTE: Não tentamos atualizar a tabela 'products' aqui para evitar erros de permissão (RLS).
+          // O Dashboard calculará o total dinamicamente lendo a tabela 'sales'.
           if (pendingSaleId) {
-              await supabase.from('sales').update({ status: 'approved' }).eq('id', pendingSaleId);
-              
-              // CRUCIAL: Buscar o produto fresco do banco para evitar sobrescrever dados
-              const { data: freshProduct } = await supabase.from('products').select('sales_count, total_revenue').eq('id', product.id).single();
-              
-              const currentSalesCount = freshProduct ? (freshProduct.sales_count || 0) : (product.sales_count || 0);
-              const currentTotalRevenue = freshProduct ? (freshProduct.total_revenue || 0) : (product.total_revenue || 0);
-
-              // Increment Sales Count and Revenue on Product
-              await supabase.from('products').update({ 
-                  sales_count: currentSalesCount + 1,
-                  total_revenue: currentTotalRevenue + totalAmount
-              }).eq('id', product.id);
+              const { error: updateError } = await supabase.from('sales').update({ status: 'approved' }).eq('id', pendingSaleId);
+              if (updateError) console.error("Erro ao aprovar venda no DB:", updateError);
           }
 
           setPaymentSuccess(true);

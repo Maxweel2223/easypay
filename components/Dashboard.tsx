@@ -324,13 +324,17 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
         // 2. Construct Final URL (Manually, to ensure we have it)
         const finalUrl = `${baseUrl}/p/${product.id}?ref=${createdLink.id}`;
         
-        // 3. Update DB (We don't need to wait for data return, just error check)
+        // 3. Update DB
         const { error: updateError } = await supabase
             .from('payment_links')
             .update({ url: finalUrl })
             .eq('id', createdLink.id);
             
-        if (updateError) throw updateError;
+        if (updateError) {
+             console.error("Link update failed:", updateError);
+             alert("O link foi criado mas ocorreu um erro ao salvar a URL final. Por favor, verifique se você rodou o script SQL de permissões.");
+             throw updateError;
+        }
         
         // 4. Construct Final Object Optimistically (Don't rely on DB return for UI responsiveness)
         const finalLinkObject = {
@@ -347,7 +351,10 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
 
     } catch (e: any) {
         console.error("Link Generation Error:", e);
-        alert("Erro ao gerar link: " + e.message);
+        // Do not alert if it was the updateError handled above, unless it is critical
+        if (!e.message.includes("permissões")) {
+           alert("Erro ao gerar link: " + e.message);
+        }
     } finally {
         setIsCreatingLink(false);
     }
