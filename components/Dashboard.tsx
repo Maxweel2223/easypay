@@ -39,18 +39,27 @@ import {
   AlertCircle,
   Download,
   Calendar,
-  Smartphone
+  Smartphone,
+  ChevronDown,
+  RefreshCw,
+  CheckCircle2
 } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../supabaseClient';
 import { GoogleGenAI } from "@google/genai";
 
+// --- ASSETS ---
+const mpesaLogo = "https://play-lh.googleusercontent.com/BeFHX9dTKeuLrF8TA0gr9kfXLGicQtnxoTM8xJThn9EKCl-h5JmJoqFkaPBoo4qi7w";
+const emolaLogo = "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRO8LfqUNexEHyVJhjmUeFNYSVkUoZvCkCwkw&s";
+
+// --- TYPES ---
 type Tab = 'overview' | 'products' | 'links' | 'sales' | 'metrics' | 'settings';
 type ProductStatus = 'draft' | 'analyzing' | 'active' | 'rejected';
 type ProductCategory = 'ebooks' | 'cursos' | 'mentoria' | 'software' | 'audio' | 'templates' | 'outros';
 type PaymentMethod = 'mpesa' | 'emola';
 type SaleStatus = 'approved' | 'pending' | 'cancelled' | 'refunded';
 type DateRange = 'today' | 'yesterday' | '7days' | '15days' | '30days' | '60days' | '90days' | '6months' | 'year' | 'custom';
+type MetricsSubTab = 'resumo' | 'checkout' | 'gateway' | 'historico';
 
 interface DashboardProps {
   session: Session;
@@ -112,8 +121,14 @@ interface AppNotification {
     created_at: string;
 }
 
+// --- SKELETON COMPONENT ---
+const Skeleton = ({ className, ...props }: { className?: string } & React.HTMLAttributes<HTMLDivElement>) => (
+  <div className={`bg-slate-200 animate-pulse rounded ${className}`} {...props} />
+);
+
 const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = 'overview' }) => {
   const [activeTab, setActiveTab] = useState<Tab>(initialTab);
+  const [metricsSubTab, setMetricsSubTab] = useState<MetricsSubTab>('resumo');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const productImageInputRef = useRef<HTMLInputElement>(null);
 
@@ -129,6 +144,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
   // Filter State
   const [searchQuery, setSearchQuery] = useState('');
   const [dateRange, setDateRange] = useState<DateRange>('today');
+  const [showDateDropdown, setShowDateDropdown] = useState(false); // For custom dropdown
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
   const [selectedProductId, setSelectedProductId] = useState<string>('all');
@@ -189,7 +205,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
     if (Notification.permission === 'granted') {
       new Notification(title, {
         body,
-        icon: '/icon-192x192.png', // Fallback if not exists
+        icon: '/icon-192x192.png', 
         badge: '/badge.png'
       });
     }
@@ -200,7 +216,6 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
     const handleBeforeInstallPrompt = (e: any) => {
       e.preventDefault();
       setDeferredPrompt(e);
-      // Check if we should show based on local storage or logic
       const hasSeenPrompt = localStorage.getItem('payeasy_install_prompt_seen');
       if (!hasSeenPrompt) {
          setShowInstallModal(true);
@@ -225,7 +240,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
   // --- Filtering Logic ---
   const getDateRangeStart = () => {
       const now = new Date();
-      now.setHours(0,0,0,0); // Start of today
+      now.setHours(0,0,0,0);
 
       switch (dateRange) {
           case 'today': return now;
@@ -247,16 +262,12 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
     const now = new Date();
     const startDate = getDateRangeStart();
     const endDate = dateRange === 'custom' && customEndDate ? new Date(customEndDate) : now;
-    
-    // Adjust end date to end of day
     endDate.setHours(23, 59, 59, 999);
 
     let result = sales;
 
-    // Filter by Date
     if (startDate) {
         if (dateRange === 'yesterday') {
-             // Specific case for yesterday (start of yesterday to end of yesterday)
              const endYest = new Date(startDate);
              endYest.setHours(23, 59, 59, 999);
              result = result.filter(s => {
@@ -271,12 +282,10 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
         }
     }
 
-    // Filter by Product
     if (selectedProductId !== 'all') {
         result = result.filter(s => s.product_id === selectedProductId);
     }
 
-    // Filter by Search Query (ID or Customer)
     if (searchQuery) {
         result = result.filter(s => 
             s.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -300,7 +309,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
 
   const calculateCVR = () => {
       const totalViews = products.reduce((acc, p) => acc + (p.views_count || 0), 0);
-      const totalApprovedSales = sales.filter(s => s.status === 'approved').length; // Global conversion, maybe refine later by filtered date
+      const totalApprovedSales = sales.filter(s => s.status === 'approved').length; 
       if (totalViews === 0) return 0;
       return ((totalApprovedSales / totalViews) * 100).toFixed(1);
   };
@@ -313,6 +322,7 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
   };
 
   const fetchData = async () => {
+    // Note: Do not setLoading(true) here to avoid flickering on auto-refresh
     try {
         const { data: salesData } = await supabase.from('sales').select('*').eq('user_id', session.user.id).order('created_at', { ascending: false });
         if (salesData) setSales(salesData);
@@ -479,51 +489,37 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
     });
     const maxVal = Math.max(...hours, 100);
 
+    if (hours.every(v => v === 0)) {
+        return (
+            <div className="h-48 flex flex-col items-center justify-center bg-gray-50/50 rounded-xl border border-dashed border-gray-200">
+                <BarChart2 className="text-slate-300 mb-2" size={48} />
+                <p className="font-serif text-slate-800 text-lg">Sem dados</p>
+                <p className="text-slate-400 text-sm">Nenhuma transação registrada hoje!</p>
+            </div>
+        )
+    }
+
     return (
-        <div className="h-48 flex items-end justify-between gap-1 pt-4">
+        <div className="h-48 flex items-end justify-between gap-1 pt-4 relative">
+             <div className="absolute inset-x-0 top-0 bottom-6 flex flex-col justify-between pointer-events-none">
+                 <div className="border-t border-dashed border-gray-100 w-full h-px"></div>
+                 <div className="border-t border-dashed border-gray-100 w-full h-px"></div>
+                 <div className="border-t border-dashed border-gray-100 w-full h-px"></div>
+             </div>
             {hours.map((val, i) => (
-                <div key={i} className="flex-1 flex flex-col justify-end items-center group relative">
-                    <div className="w-full bg-brand-200 rounded-t-sm hover:bg-brand-500 transition-colors" style={{ height: `${(val / maxVal) * 100}%` }}></div>
-                    {i % 4 === 0 && <span className="text-[10px] text-slate-400 mt-1">{i}h</span>}
+                <div key={i} className="flex-1 flex flex-col justify-end items-center group relative z-10 h-full">
                     {val > 0 && (
-                        <div className="absolute -top-8 bg-slate-800 text-white text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap">
-                            {val.toLocaleString()} MT
-                        </div>
+                         <div className="w-full bg-[#E0F2F1] rounded-t-sm hover:bg-[#00C49F] transition-colors relative group-hover:scale-y-105 origin-bottom duration-300" style={{ height: `${(val / maxVal) * 100}%` }}>
+                              <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap shadow-lg">
+                                  {val.toLocaleString()} MT
+                              </div>
+                         </div>
                     )}
+                    {val === 0 && <div className="w-full h-[2px] bg-[#E0F2F1] rounded-full"></div>}
+                    
+                    {i % 3 === 0 && <span className="text-[10px] text-slate-300 mt-2 absolute -bottom-5">{i}h</span>}
                 </div>
             ))}
-        </div>
-    );
-  };
-
-  // Modern Chart Implementation using SVG (Reused)
-  const renderModernChart = () => {
-    const daysToShow = dateRange === 'today' || dateRange === 'yesterday' ? 24 : 12;
-    const dataPoints = [];
-    
-    // Logic for chart points based on dateRange
-    // Simplified for "Overview" generic look
-    for (let i = 0; i < daysToShow; i++) {
-        // ... (Similar logic to existing, just ensuring it doesn't break)
-        dataPoints.push({ label: `${i}`, value: Math.random() * 5000 }); // Placeholder for smoother visual in overview if no extensive data logic
-    }
-    // Use actual logic if available in filteredSales
-    // For brevity in this large file, assume the chart component renders based on `filteredApprovedSales`
-    
-    return (
-        <div className="w-full bg-surface rounded-2xl p-6 shadow-card border border-gray-100/50">
-             <div className="flex justify-between items-center mb-6">
-                 <div>
-                    <h3 className="text-slate-800 font-bold text-lg">Performance de Vendas</h3>
-                 </div>
-             </div>
-             {/* Simple Placeholder Chart Visual */}
-             <div className="h-[200px] w-full flex items-end gap-2">
-                 {Array.from({length: 20}).map((_, i) => {
-                     const h = Math.floor(Math.random() * 80) + 10;
-                     return <div key={i} className="flex-1 bg-brand-100 rounded-t-lg hover:bg-brand-500 transition-colors" style={{height: `${h}%`}}></div>
-                 })}
-             </div>
         </div>
     );
   };
@@ -542,6 +538,23 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
         {activeTab === id && <ChevronRight size={16} className="ml-auto opacity-50"/>}
     </button>
   );
+
+  // --- DATE LABEL HELPER ---
+  const getDateLabel = () => {
+      switch(dateRange) {
+          case 'today': return 'Hoje';
+          case 'yesterday': return 'Ontem';
+          case '7days': return 'Últimos 7 dias';
+          case '15days': return 'Últimos 15 dias';
+          case '30days': return 'Últimos 30 dias';
+          case '60days': return 'Últimos 60 dias';
+          case '90days': return 'Últimos 90 dias';
+          case '6months': return 'Últimos 6 meses';
+          case 'year': return 'Último ano';
+          case 'custom': return 'Período personalizado';
+          default: return 'Selecione';
+      }
+  }
 
   return (
     <div className="flex h-screen bg-background overflow-hidden font-sans">
@@ -728,58 +741,17 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                         <div className="flex-1 space-y-8">
                             <div>
                                 <h2 className="text-2xl font-bold text-slate-900 mb-4">Visão Geral das suas vendas aprovadas</h2>
-                                
-                                {/* Advanced Filters */}
+                                {/* Advanced Filters (Overview version - simplified) */}
                                 <div className="flex flex-wrap items-center gap-4 bg-white p-3 rounded-xl border border-gray-100 shadow-sm">
                                     <div className="flex items-center gap-2 text-slate-500 text-sm px-2">
                                         <Filter size={16} />
                                         <span className="font-bold">Filtrar:</span>
                                     </div>
-                                    
-                                    {/* Date Selector */}
-                                    <div className="relative">
-                                        <select 
-                                            value={dateRange} 
-                                            onChange={(e) => setDateRange(e.target.value as DateRange)}
-                                            className="appearance-none bg-gray-50 border border-gray-200 text-slate-700 text-sm rounded-lg focus:ring-brand-500 focus:border-brand-500 block w-full p-2.5 pr-8 font-medium cursor-pointer"
-                                        >
-                                            <option value="today">Hoje</option>
-                                            <option value="yesterday">Ontem</option>
-                                            <option value="7days">Últimos 7 dias</option>
-                                            <option value="15days">Últimos 15 dias</option>
-                                            <option value="30days">Últimos 30 dias</option>
-                                            <option value="60days">Últimos 60 dias</option>
-                                            <option value="90days">Últimos 90 dias</option>
-                                            <option value="6months">Últimos 6 meses</option>
-                                            <option value="year">Último Ano</option>
-                                            <option value="custom">Personalizado</option>
-                                        </select>
-                                    </div>
-
-                                    {/* Custom Date Inputs */}
-                                    {dateRange === 'custom' && (
-                                        <div className="flex items-center gap-2">
-                                            <input type="date" value={customStartDate} onChange={e => setCustomStartDate(e.target.value)} className="bg-gray-50 border border-gray-200 text-slate-700 text-xs rounded-lg p-2.5" />
-                                            <span className="text-slate-400">-</span>
-                                            <input type="date" value={customEndDate} onChange={e => setCustomEndDate(e.target.value)} className="bg-gray-50 border border-gray-200 text-slate-700 text-xs rounded-lg p-2.5" />
-                                        </div>
-                                    )}
-
-                                    <div className="h-6 w-px bg-gray-200 mx-2"></div>
-
-                                    {/* Product Selector */}
-                                    <div className="relative flex-1 min-w-[200px]">
-                                        <select 
-                                            value={selectedProductId} 
-                                            onChange={(e) => setSelectedProductId(e.target.value)}
-                                            className="appearance-none bg-gray-50 border border-gray-200 text-slate-700 text-sm rounded-lg focus:ring-brand-500 focus:border-brand-500 block w-full p-2.5 font-medium cursor-pointer"
-                                        >
-                                            <option value="all">Todos os Produtos</option>
-                                            {products.map(p => (
-                                                <option key={p.id} value={p.id}>{p.name}</option>
-                                            ))}
-                                        </select>
-                                    </div>
+                                    <select value={dateRange} onChange={(e) => setDateRange(e.target.value as DateRange)} className="appearance-none bg-gray-50 border border-gray-200 text-slate-700 text-sm rounded-lg focus:ring-brand-500 focus:border-brand-500 block p-2.5 pr-8 font-medium cursor-pointer">
+                                        <option value="today">Hoje</option>
+                                        <option value="7days">Últimos 7 dias</option>
+                                        <option value="30days">Últimos 30 dias</option>
+                                    </select>
                                 </div>
                             </div>
 
@@ -791,9 +763,8 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                                         <div className="p-2 bg-brand-50 rounded-lg text-brand-600"><Wallet size={16}/></div>
                                     </div>
                                     <div className="z-10">
-                                        <div className="text-2xl font-bold text-slate-900">{grossRevenue.toLocaleString()} MT</div>
+                                        {loading ? <Skeleton className="h-8 w-32 mt-1" /> : <div className="text-2xl font-bold text-slate-900">{grossRevenue.toLocaleString()} MT</div>}
                                     </div>
-                                    <div className="absolute -right-4 -bottom-4 opacity-5 group-hover:opacity-10 transition-opacity"><Wallet size={80}/></div>
                                 </div>
 
                                 <div className="bg-surface p-5 rounded-2xl shadow-card border border-gray-100 flex flex-col justify-between h-32 relative overflow-hidden group hover:border-green-200 transition-colors">
@@ -802,9 +773,8 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                                         <div className="p-2 bg-green-50 rounded-lg text-green-600"><DollarSign size={16}/></div>
                                     </div>
                                     <div className="z-10">
-                                        <div className="text-2xl font-bold text-slate-900">{netRevenue.toLocaleString()} MT</div>
+                                        {loading ? <Skeleton className="h-8 w-32 mt-1" /> : <div className="text-2xl font-bold text-slate-900">{netRevenue.toLocaleString()} MT</div>}
                                     </div>
-                                    <div className="absolute -right-4 -bottom-4 opacity-5 group-hover:opacity-10 transition-opacity text-green-600"><DollarSign size={80}/></div>
                                 </div>
 
                                 <div className="bg-surface p-5 rounded-2xl shadow-card border border-gray-100 flex flex-col justify-between h-32 relative overflow-hidden group hover:border-blue-200 transition-colors">
@@ -813,9 +783,8 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                                         <div className="p-2 bg-blue-50 rounded-lg text-blue-600"><Activity size={16}/></div>
                                     </div>
                                     <div className="z-10">
-                                        <div className="text-2xl font-bold text-slate-900">{calculateCVR()}%</div>
+                                        {loading ? <Skeleton className="h-8 w-16 mt-1" /> : <div className="text-2xl font-bold text-slate-900">{calculateCVR()}%</div>}
                                     </div>
-                                    <div className="absolute -right-4 -bottom-4 opacity-5 group-hover:opacity-10 transition-opacity text-blue-600"><Activity size={80}/></div>
                                 </div>
 
                                 <div className="bg-surface p-5 rounded-2xl shadow-card border border-gray-100 flex flex-col justify-between h-32 relative overflow-hidden group hover:border-purple-200 transition-colors">
@@ -824,56 +793,8 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                                         <div className="p-2 bg-purple-50 rounded-lg text-purple-600"><ShoppingBag size={16}/></div>
                                     </div>
                                     <div className="z-10">
-                                        <div className="text-2xl font-bold text-slate-900">{filteredApprovedSales.length}</div>
+                                        {loading ? <Skeleton className="h-8 w-12 mt-1" /> : <div className="text-2xl font-bold text-slate-900">{filteredApprovedSales.length}</div>}
                                     </div>
-                                    <div className="absolute -right-4 -bottom-4 opacity-5 group-hover:opacity-10 transition-opacity text-purple-600"><ShoppingBag size={80}/></div>
-                                </div>
-                            </div>
-
-                            {/* CHART */}
-                            {renderModernChart()}
-
-                            {/* RECENT SALES TABLE (Filtered) */}
-                            <div className="bg-surface rounded-2xl shadow-card border border-gray-100 overflow-hidden">
-                                <div className="p-6 border-b border-gray-50 flex justify-between items-center">
-                                    <h3 className="font-bold text-slate-800 text-lg">Últimas Transações (Filtradas)</h3>
-                                    <button onClick={() => changeTab('sales')} className="text-sm text-brand-600 font-bold hover:underline">Ver todas</button>
-                                </div>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left">
-                                        <thead className="bg-gray-50 text-xs text-slate-500 font-bold uppercase tracking-wider">
-                                            <tr>
-                                                <th className="p-4 pl-6 rounded-tl-lg">Produto</th>
-                                                <th className="p-4">Cliente</th>
-                                                <th className="p-4">Valor</th>
-                                                <th className="p-4 rounded-tr-lg">Status</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="text-sm">
-                                            {filteredSales.slice(0, 5).map(sale => (
-                                                <tr key={sale.id} className="border-b border-gray-50 hover:bg-gray-50/50 transition-colors">
-                                                    <td className="p-4 pl-6">
-                                                        <div className="font-bold text-slate-800">{sale.product_name}</div>
-                                                        <div className="text-xs text-slate-400 font-mono">#{sale.id.slice(0,8)}</div>
-                                                    </td>
-                                                    <td className="p-4 text-slate-600">{sale.customer_name}</td>
-                                                    <td className="p-4 font-bold text-slate-900">{sale.amount.toLocaleString()} MT</td>
-                                                    <td className="p-4">
-                                                        <span className={`px-2.5 py-1 rounded-full text-xs font-bold uppercase ${
-                                                            sale.status === 'approved' ? 'bg-green-100 text-green-700' : 
-                                                            sale.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 
-                                                            'bg-red-100 text-red-700'
-                                                        }`}>
-                                                            {sale.status === 'approved' ? 'Pago' : sale.status === 'pending' ? 'Pendente' : 'Cancelado'}
-                                                        </span>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                            {filteredSales.length === 0 && (
-                                                <tr><td colSpan={4} className="p-8 text-center text-slate-400 text-sm">Nenhuma venda encontrada com os filtros atuais.</td></tr>
-                                            )}
-                                        </tbody>
-                                    </table>
                                 </div>
                             </div>
                         </div>
@@ -889,22 +810,34 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                                  </div>
                                  
                                  <div className="flex-1 overflow-y-auto p-2 space-y-2 custom-scrollbar">
-                                     {sales.slice(0, 15).map((sale) => (
-                                         <div key={sale.id} className="p-3 bg-white rounded-xl border border-gray-100 hover:border-brand-200 shadow-sm transition-all group">
-                                             <div className="flex justify-between items-start mb-1">
-                                                 <span className="text-xs font-bold text-slate-700 line-clamp-1 group-hover:text-brand-600 transition-colors">{sale.product_name}</span>
-                                                 <span className="text-xs font-bold text-slate-900">{sale.amount} MT</span>
-                                             </div>
-                                             <div className="flex justify-between items-center">
-                                                 <div className="flex items-center gap-1.5">
-                                                     <div className={`w-1.5 h-1.5 rounded-full ${sale.payment_method === 'mpesa' ? 'bg-red-500' : 'bg-orange-500'}`}></div>
-                                                     <span className="text-[10px] text-slate-400 uppercase font-medium">{sale.payment_method}</span>
-                                                 </div>
-                                                 <span className="text-[10px] text-slate-300">Há {Math.floor((new Date().getTime() - new Date(sale.created_at).getTime()) / 60000)}m</span>
-                                             </div>
-                                         </div>
-                                     ))}
-                                     {sales.length === 0 && (
+                                     {loading ? (
+                                        Array(5).fill(0).map((_, i) => (
+                                            <div key={i} className="p-3 bg-white rounded-xl border border-gray-50">
+                                                <div className="flex justify-between mb-2"><Skeleton className="h-4 w-24"/><Skeleton className="h-4 w-12"/></div>
+                                                <div className="flex justify-between"><Skeleton className="h-3 w-16"/><Skeleton className="h-3 w-10"/></div>
+                                            </div>
+                                        ))
+                                     ) : (
+                                        sales.slice(0, 15).map((sale) => (
+                                            <div key={sale.id} className="p-3 bg-white rounded-xl border border-gray-100 hover:border-brand-200 shadow-sm transition-all group">
+                                                <div className="flex justify-between items-start mb-1">
+                                                    <span className="text-xs font-bold text-slate-700 line-clamp-1 group-hover:text-brand-600 transition-colors">{sale.product_name}</span>
+                                                    <span className="text-xs font-bold text-slate-900">{sale.amount} MT</span>
+                                                </div>
+                                                <div className="flex justify-between items-center">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <img 
+                                                            src={sale.payment_method === 'mpesa' ? mpesaLogo : emolaLogo} 
+                                                            alt={sale.payment_method} 
+                                                            className="h-4 w-auto object-contain rounded-sm"
+                                                        />
+                                                    </div>
+                                                    <span className="text-[10px] text-slate-300">Há {Math.floor((new Date().getTime() - new Date(sale.created_at).getTime()) / 60000)}m</span>
+                                                </div>
+                                            </div>
+                                        ))
+                                     )}
+                                     {!loading && sales.length === 0 && (
                                          <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-2">
                                              <Zap size={24} className="opacity-20"/>
                                              <span className="text-xs">Aguardando vendas...</span>
@@ -912,147 +845,206 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                                      )}
                                  </div>
                              </div>
-
-                             {/* PRO TIP CARD */}
-                             <div className="bg-brand-600 rounded-2xl p-5 text-white shadow-lg shadow-brand-500/30 relative overflow-hidden">
-                                 <div className="relative z-10">
-                                     <h4 className="font-bold text-sm mb-2">Aumente suas vendas</h4>
-                                     <p className="text-brand-100 text-xs leading-relaxed mb-4">Adicione um "Order Bump" no seu produto principal e aumente o ticket médio em até 30%.</p>
-                                     <button className="bg-white text-brand-600 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-brand-50 transition-colors">Ver tutorial</button>
-                                 </div>
-                                 <div className="absolute top-0 right-0 -mt-2 -mr-2 w-20 h-20 bg-white opacity-10 rounded-full blur-xl"></div>
-                                 <div className="absolute bottom-0 left-0 -mb-2 -ml-2 w-16 h-16 bg-purple-400 opacity-20 rounded-full blur-lg"></div>
-                             </div>
                         </div>
                     </div>
                 )}
 
-                {/* --- METRICS TAB --- */}
+                {/* --- METRICS TAB (REDESIGNED) --- */}
                 {activeTab === 'metrics' && (
-                    <div className="space-y-8">
-                         <div>
-                            <h2 className="text-2xl font-bold text-slate-900 mb-4">Métricas Avançadas</h2>
-                             {/* Reuse Filter Logic in Metrics */}
-                             <div className="flex flex-wrap items-center gap-4 bg-white p-4 rounded-xl border border-gray-100 shadow-sm mb-6">
-                                    <div className="flex items-center gap-2 text-slate-500 text-sm px-2">
-                                        <Filter size={16} />
-                                        <span className="font-bold">Analisar:</span>
-                                    </div>
-                                    <select value={dateRange} onChange={(e) => setDateRange(e.target.value as DateRange)} className="bg-gray-50 border border-gray-200 text-slate-700 text-sm rounded-lg p-2.5 font-medium">
-                                        <option value="today">Hoje</option>
-                                        <option value="yesterday">Ontem</option>
-                                        <option value="30days">Últimos 30 dias</option>
-                                        <option value="year">Último Ano</option>
-                                    </select>
-                                    <select value={selectedProductId} onChange={(e) => setSelectedProductId(e.target.value)} className="bg-gray-50 border border-gray-200 text-slate-700 text-sm rounded-lg p-2.5 font-medium flex-1">
-                                        <option value="all">Todos os Produtos</option>
+                    <div className="space-y-6">
+                        
+                         {/* 1. Header with Filters (Styled like screenshot) */}
+                         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                            {/* Product Selector - Simple Dropdown Left */}
+                             <div className="relative">
+                                 <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-md px-3 py-2 cursor-pointer hover:border-brand-300 transition-colors group">
+                                    <BarChart2 size={16} className="text-slate-500 group-hover:text-brand-600" />
+                                    <select 
+                                        value={selectedProductId} 
+                                        onChange={(e) => setSelectedProductId(e.target.value)} 
+                                        className="appearance-none bg-transparent text-sm font-medium text-slate-700 outline-none cursor-pointer pr-4"
+                                    >
+                                        <option value="all">Todos os produtos</option>
                                         {products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                                     </select>
-                            </div>
-
-                            {/* 1. Transaction Summary */}
-                            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                                <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm text-center">
-                                    <div className="text-xs font-bold text-slate-400 uppercase mb-1">Total Transações</div>
-                                    <div className="text-2xl font-bold text-slate-900">{filteredSales.length}</div>
-                                </div>
-                                <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm text-center">
-                                    <div className="text-xs font-bold text-green-600 uppercase mb-1">Sucesso</div>
-                                    <div className="text-2xl font-bold text-green-700">{filteredApprovedSales.length}</div>
-                                </div>
-                                <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm text-center">
-                                    <div className="text-xs font-bold text-yellow-600 uppercase mb-1">Pendentes</div>
-                                    <div className="text-2xl font-bold text-yellow-700">{filteredSales.filter(s => s.status === 'pending').length}</div>
-                                </div>
-                                <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm text-center">
-                                    <div className="text-xs font-bold text-red-500 uppercase mb-1">Falhas</div>
-                                    <div className="text-2xl font-bold text-red-600">{filteredSales.filter(s => s.status === 'cancelled').length}</div>
-                                </div>
-                                <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm text-center">
-                                    <div className="text-xs font-bold text-slate-400 uppercase mb-1">Reembolsos</div>
-                                    <div className="text-2xl font-bold text-slate-500">0</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* 2. Charts Section */}
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card">
-                                <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><Clock size={18}/> Transações por Hora</h3>
-                                {renderHourlyChart()}
-                            </div>
-                            
-                            {/* 3. Abandonment Analysis */}
-                            <div className="bg-white p-6 rounded-2xl border border-gray-100 shadow-card">
-                                <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><AlertCircle size={18}/> Abandono de Checkout</h3>
-                                <div className="space-y-4">
-                                    <div className="flex justify-between items-center p-4 bg-red-50 rounded-xl border border-red-100">
-                                        <div>
-                                            <div className="text-sm font-bold text-red-800">Potencial Perdido</div>
-                                            <div className="text-xs text-red-600">Vendas não concluídas</div>
-                                        </div>
-                                        <div className="text-xl font-bold text-red-700">
-                                            {filteredSales.filter(s => s.status !== 'approved').reduce((acc,s) => acc+s.amount, 0).toLocaleString()} MT
-                                        </div>
-                                    </div>
-                                    <div className="flex justify-between items-center p-4 bg-blue-50 rounded-xl border border-blue-100">
-                                        <div>
-                                            <div className="text-sm font-bold text-blue-800">Usuários Contactáveis</div>
-                                            <div className="text-xs text-blue-600">Com WhatsApp preenchido</div>
-                                        </div>
-                                        <div className="text-xl font-bold text-blue-700">
-                                            {filteredSales.filter(s => s.status !== 'approved' && s.customer_phone).length}
-                                        </div>
-                                    </div>
-                                    <button onClick={() => changeTab('sales')} className="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-xs font-bold transition-colors">
-                                        Ver lista para recuperação
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* 4. History Table */}
-                        <div className="bg-white rounded-2xl border border-gray-100 shadow-card overflow-hidden">
-                             <div className="p-6 border-b border-gray-50">
-                                <h3 className="font-bold text-slate-800">Histórico Completo de Transações</h3>
+                                    <ChevronDown size={14} className="text-slate-400 absolute right-3 pointer-events-none" />
+                                 </div>
                              </div>
-                             <div className="overflow-x-auto">
-                                <table className="w-full text-left">
-                                    <thead className="bg-gray-50 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                                        <tr>
-                                            <th className="p-4 pl-6">ID</th>
-                                            <th className="p-4">Cliente</th>
-                                            <th className="p-4">Produto</th>
-                                            <th className="p-4">Valor</th>
-                                            <th className="p-4">Pagamento</th>
-                                            <th className="p-4">Data</th>
-                                            <th className="p-4">Status</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="text-sm">
-                                        {filteredSales.map(sale => (
-                                            <tr key={sale.id} className="border-b border-gray-50 hover:bg-gray-50/50">
-                                                <td className="p-4 pl-6 font-mono text-xs text-slate-400">#{sale.id.slice(0,8)}</td>
-                                                <td className="p-4 font-medium text-slate-800">{sale.customer_name}</td>
-                                                <td className="p-4 text-slate-600">{sale.product_name}</td>
-                                                <td className="p-4 font-bold">{sale.amount.toLocaleString()} MT</td>
-                                                <td className="p-4 capitalize text-xs">{sale.payment_method}</td>
-                                                <td className="p-4 text-xs text-slate-500">{new Date(sale.created_at).toLocaleString()}</td>
-                                                <td className="p-4">
-                                                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
-                                                        sale.status === 'approved' ? 'bg-green-100 text-green-700' : 
-                                                        sale.status === 'pending' ? 'bg-yellow-100 text-yellow-700' : 
-                                                        'bg-red-100 text-red-700'
-                                                    }`}>
-                                                        {sale.status === 'approved' ? 'Sucesso' : sale.status}
-                                                    </span>
-                                                </td>
+
+                             {/* Date Selector - Custom Green Dropdown Right */}
+                             <div className="relative z-50">
+                                 <button 
+                                    onClick={() => setShowDateDropdown(!showDateDropdown)}
+                                    className="flex items-center gap-2 bg-white border border-gray-200 rounded-md px-4 py-2 text-sm font-medium text-slate-700 hover:border-gray-300 transition-all shadow-sm"
+                                 >
+                                     <Calendar size={16} className="text-slate-500" />
+                                     {getDateLabel()}
+                                     <ChevronDown size={14} className="text-slate-400 ml-2" />
+                                 </button>
+
+                                 {showDateDropdown && (
+                                     <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-lg shadow-xl border border-gray-100 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+                                         <div className="bg-[#00C49F] px-4 py-2 text-white text-sm font-medium">
+                                             {getDateLabel()}
+                                         </div>
+                                         <div className="py-2">
+                                             <button onClick={() => { setDateRange('today'); setShowDateDropdown(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-gray-50 hover:text-brand-600 transition-colors">Hoje</button>
+                                             <button onClick={() => { setDateRange('yesterday'); setShowDateDropdown(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-gray-50 hover:text-brand-600 transition-colors">Ontem</button>
+                                             
+                                             <div className="px-4 py-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-1">Períodos</div>
+                                             
+                                             <button onClick={() => { setDateRange('7days'); setShowDateDropdown(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-gray-50 hover:text-brand-600 transition-colors">Últimos 7 dias</button>
+                                             <button onClick={() => { setDateRange('15days'); setShowDateDropdown(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-gray-50 hover:text-brand-600 transition-colors">Últimos 15 dias</button>
+                                             <button onClick={() => { setDateRange('30days'); setShowDateDropdown(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-gray-50 hover:text-brand-600 transition-colors">Últimos 30 dias</button>
+                                             <button onClick={() => { setDateRange('60days'); setShowDateDropdown(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-gray-50 hover:text-brand-600 transition-colors">Últimos 60 dias</button>
+                                             <button onClick={() => { setDateRange('90days'); setShowDateDropdown(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-gray-50 hover:text-brand-600 transition-colors">Últimos 90 dias</button>
+                                             <button onClick={() => { setDateRange('6months'); setShowDateDropdown(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-gray-50 hover:text-brand-600 transition-colors">Últimos 6 meses</button>
+                                             <button onClick={() => { setDateRange('year'); setShowDateDropdown(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-gray-50 hover:text-brand-600 transition-colors">Último ano</button>
+                                             
+                                             <div className="border-t border-gray-50 mt-1 pt-1">
+                                                <button onClick={() => { setDateRange('custom'); setShowDateDropdown(false); }} className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-gray-50 flex items-center gap-2"><Calendar size={14}/> Período personalizado</button>
+                                             </div>
+                                         </div>
+                                     </div>
+                                 )}
+                             </div>
+                         </div>
+
+                        {/* 2. Tabs Navigation */}
+                        <div className="flex border-b border-gray-200 overflow-x-auto">
+                            {[
+                                { id: 'resumo', label: 'Resumo', icon: TrendingUp },
+                                { id: 'checkout', label: 'Performance do Checkout', icon: ShoppingBag },
+                                { id: 'gateway', label: 'Performance por Gateway', icon: CreditCard },
+                                { id: 'historico', label: 'Histórico de Vendas', icon: PieChart },
+                            ].map((tab) => (
+                                <button
+                                    key={tab.id}
+                                    onClick={() => setMetricsSubTab(tab.id as MetricsSubTab)}
+                                    className={`flex items-center gap-2 px-6 py-4 text-sm font-medium border-b-2 transition-all whitespace-nowrap ${
+                                        metricsSubTab === tab.id 
+                                        ? 'border-[#00C49F] text-[#00C49F]' 
+                                        : 'border-transparent text-slate-500 hover:text-slate-700'
+                                    }`}
+                                >
+                                    <tab.icon size={16} />
+                                    {tab.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        {metricsSubTab === 'resumo' && (
+                            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                {/* 3. KPI Cards - Clean Style */}
+                                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                                    <div className="bg-white p-5 rounded-lg border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                                        <div className="text-sm text-slate-500 mb-2">Total</div>
+                                        {loading ? <Skeleton className="h-8 w-16 mb-1"/> : <div className="text-3xl font-bold text-slate-900">{filteredSales.length}</div>}
+                                        <div className="text-xs text-slate-400">transações</div>
+                                    </div>
+                                    <div className="bg-white p-5 rounded-lg border border-gray-100 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden">
+                                        <div className="flex justify-between items-start">
+                                            <div className="text-sm text-[#00C49F] mb-2 font-medium">Sucesso</div>
+                                            <CheckCircle2 size={16} className="text-[#00C49F]" />
+                                        </div>
+                                        {loading ? <Skeleton className="h-8 w-16 mb-1"/> : <div className="text-3xl font-bold text-slate-900">{filteredApprovedSales.length}</div>}
+                                        <div className="text-xs text-[#00C49F] opacity-80">{loading ? <Skeleton className="h-3 w-10"/> : `${calculateCVR()}% taxa`}</div>
+                                    </div>
+                                    <div className="bg-white p-5 rounded-lg border border-gray-100 shadow-sm hover:shadow-md transition-shadow bg-[#FFFDF5]">
+                                        <div className="flex justify-between items-start">
+                                            <div className="text-sm text-amber-600 mb-2 font-medium">Pendente</div>
+                                            <RefreshCw size={16} className="text-amber-600" />
+                                        </div>
+                                        {loading ? <Skeleton className="h-8 w-16 mb-1"/> : <div className="text-3xl font-bold text-slate-900">{filteredSales.filter(s => s.status === 'pending').length}</div>}
+                                        <div className="text-xs text-amber-600 opacity-80">aguardando</div>
+                                    </div>
+                                    <div className="bg-white p-5 rounded-lg border border-gray-100 shadow-sm hover:shadow-md transition-shadow bg-[#FFF5F5]">
+                                        <div className="flex justify-between items-start">
+                                            <div className="text-sm text-red-600 mb-2 font-medium">Falhas</div>
+                                            <XIcon size={16} className="text-red-600" />
+                                        </div>
+                                        {loading ? <Skeleton className="h-8 w-16 mb-1"/> : <div className="text-3xl font-bold text-slate-900">{filteredSales.filter(s => s.status === 'cancelled').length}</div>}
+                                        <div className="text-xs text-red-600 opacity-80">0% taxa</div>
+                                    </div>
+                                    <div className="bg-white p-5 rounded-lg border border-gray-100 shadow-sm hover:shadow-md transition-shadow opacity-60">
+                                        <div className="flex justify-between items-start">
+                                            <div className="text-sm text-purple-600 mb-2 font-medium">Reembolsos</div>
+                                        </div>
+                                        <div className="text-3xl font-bold text-slate-900">0</div>
+                                        <div className="text-xs text-purple-600 opacity-80">0% taxa</div>
+                                    </div>
+                                </div>
+
+                                {/* 4. Chart Section */}
+                                <div className="bg-white p-6 rounded-lg border border-gray-100 shadow-sm">
+                                    <h3 className="text-slate-800 font-bold mb-6">Transações por Hora</h3>
+                                    {loading ? (
+                                        <div className="h-48 w-full flex items-end gap-2">
+                                            {Array(24).fill(0).map((_, i) => (
+                                                <Skeleton key={i} className="flex-1 rounded-t-sm" style={{height: `${Math.random() * 80 + 20}%`}} />
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        renderHourlyChart()
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {metricsSubTab === 'historico' && (
+                             <div className="bg-white rounded-lg border border-gray-100 shadow-sm overflow-hidden animate-in fade-in duration-300">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left">
+                                        <thead className="bg-gray-50 border-b border-gray-200">
+                                            <tr>
+                                                <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">ID</th>
+                                                <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Data</th>
+                                                <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Cliente</th>
+                                                <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Valor</th>
+                                                <th className="p-4 text-xs font-bold text-slate-500 uppercase tracking-wider">Status</th>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                                        </thead>
+                                        <tbody className="text-sm divide-y divide-gray-100">
+                                            {loading ? (
+                                                Array(5).fill(0).map((_, i) => (
+                                                    <tr key={i}>
+                                                        <td className="p-4"><Skeleton className="h-4 w-16"/></td>
+                                                        <td className="p-4"><Skeleton className="h-4 w-24"/></td>
+                                                        <td className="p-4"><Skeleton className="h-4 w-32"/></td>
+                                                        <td className="p-4"><Skeleton className="h-4 w-16"/></td>
+                                                        <td className="p-4"><Skeleton className="h-6 w-20 rounded-full"/></td>
+                                                    </tr>
+                                                ))
+                                            ) : (
+                                                filteredSales.map(sale => (
+                                                    <tr key={sale.id} className="hover:bg-slate-50/50 transition-colors">
+                                                        <td className="p-4 font-mono text-xs text-slate-400">#{sale.id.slice(0,8)}</td>
+                                                        <td className="p-4 text-slate-500 text-xs">{new Date(sale.created_at).toLocaleString()}</td>
+                                                        <td className="p-4 font-medium text-slate-800">{sale.customer_name}</td>
+                                                        <td className="p-4 font-bold">{sale.amount.toLocaleString()} MT</td>
+                                                        <td className="p-4">
+                                                            <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${
+                                                                sale.status === 'approved' ? 'bg-[#00C49F]/10 text-[#00C49F]' : 
+                                                                sale.status === 'pending' ? 'bg-amber-100 text-amber-700' : 
+                                                                'bg-red-100 text-red-700'
+                                                            }`}>
+                                                                {sale.status === 'approved' ? 'Sucesso' : sale.status === 'pending' ? 'Pendente' : 'Falha'}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
                              </div>
-                        </div>
+                        )}
+                        
+                        {(metricsSubTab === 'checkout' || metricsSubTab === 'gateway') && (
+                            <div className="bg-white p-12 rounded-lg border border-dashed border-gray-200 text-center">
+                                <p className="text-slate-400">Funcionalidade em desenvolvimento.</p>
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -1065,7 +1057,25 @@ const Dashboard: React.FC<DashboardProps> = ({ session, onLogout, initialTab = '
                                    <h2 className="text-xl font-bold text-slate-900">Meus Produtos</h2>
                                    <button onClick={handleOpenNewProduct} className="px-4 py-2 bg-slate-900 text-white rounded-lg font-bold flex items-center gap-2 text-sm shadow-md hover:bg-slate-800 transition-colors"><Plus size={16} /> Novo</button>
                                 </div>
-                                {loading ? <div className="flex justify-center py-20"><Loader2 className="animate-spin text-slate-300" size={32}/></div> : 
+                                {loading ? (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                        {[1,2,3].map(i => (
+                                            <div key={i} className="bg-white p-4 rounded-xl border border-gray-100">
+                                                <div className="flex gap-4 mb-4">
+                                                    <Skeleton className="w-16 h-16 rounded-lg"/>
+                                                    <div className="flex-1 space-y-2">
+                                                        <Skeleton className="h-4 w-3/4"/>
+                                                        <Skeleton className="h-4 w-1/2"/>
+                                                    </div>
+                                                </div>
+                                                <div className="flex justify-between pt-2">
+                                                    <Skeleton className="h-8 w-20 rounded-lg"/>
+                                                    <Skeleton className="h-8 w-20 rounded-lg"/>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : 
                                  products.length === 0 ? <div className="text-center py-20 text-slate-500">Nenhum produto encontrado.</div> :
                                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                      {products.map(product => (
